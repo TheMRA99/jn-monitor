@@ -3,7 +3,12 @@ name: jana-nayagan-monitor
 on:
   schedule:
     - cron: "*/15 * * * *"   # every 15 min (UTC; GitHub may delay a few min)
-  workflow_dispatch: {}       # manual test run
+  workflow_dispatch:          # manual run
+    inputs:
+      test_email:
+        description: "Send a test email and exit (does not touch alert state)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,7 +30,12 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_TO: ${{ secrets.ALERT_TO }}
-        run: python monitor.py
+        run: |
+          if [[ "${{ github.event.inputs.test_email }}" == "true" ]]; then
+            python monitor.py --test
+          else
+            python monitor.py
+          fi
 
       - name: Persist alert state
         run: |

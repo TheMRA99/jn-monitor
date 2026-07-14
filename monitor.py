@@ -137,6 +137,17 @@ def send_email(subject: str, body: str) -> None:
 
 
 def main() -> int:
+    if "--test" in sys.argv:
+        send_email(
+            "jn-monitor test alert",
+            "This is a test from your Jana Nayagan ticket monitor.\n\n"
+            "If you're reading this, alerts are wired up correctly. The real "
+            "blast will look different and only fire once booking actually "
+            "opens on Shaw or GV.",
+        )
+        print("Test email sent.")
+        return 0
+
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE) as f:
             if json.load(f).get("alerted"):
