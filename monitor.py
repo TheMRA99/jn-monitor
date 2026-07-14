@@ -1,6 +1,20 @@
 """Jana Nayagan SG ticket-availability monitor — Shaw + Golden Village.
 
-Runs via GitHub Actions. Alerts Telegram once when booking looks open.
+Runs via GitHub Actions. Emails once when booking looks open.
+
+Both sites are JavaScript SPAs, so scraping their HTML pages is useless
+(the page shells contain no movie data). This monitor instead calls the
+same JSON backends their front-ends use:
+
+- Shaw: https://snow-pwsm-legacy.sice.tech/get_movie_release?id=<id>
+  returns the movie's `primaryTitle`, which is prefixed "[POSTPONED]"
+  while the film is postponed. Booking open == that prefix is gone.
+- GV: https://www.gv.com.sg/.gv-api/{nowshowing,advancesales} return the
+  bookable-movie feeds. They require an `Origin: https://www.gv.com.sg`
+  header (without it the server replies {"success":false,
+  "errorMessage":"Unauthorized Request"}). Booking open == the film shows
+  up in either feed (it starts life in `comingsoon`, which is not
+  bookable).
 """
 
 import json
@@ -13,8 +27,9 @@ from email.mime.text import MIMEText
 
 STATE_FILE = "state.json"
 MOVIE_RE = re.compile(r"jana\s*nayagan", re.IGNORECASE)
-SHOWTIME_RE = re.compile(r"\b\d{1,2}:\d{2}\s?(?:AM|PM|am|pm)?\b")
-POSITIVE_KEYWORDS = ["buy tickets", "book now", "select seats"]
+
+# Shaw's internal movie id for Jana Nayagan (from shaw.sg/movie-details/1624).
+SHAW_MOVIE_ID = "1624"
 
 BLAST = (
     "\U0001F6A8 JANA NAYAGAN SG BOOKINGS ARE OPEN \U0001F6A8\n\n"
@@ -42,41 +57,58 @@ def http(url: str, data: bytes | None = None, extra: dict | None = None) -> str:
 
 
 def check_shaw() -> tuple[bool, str]:
-    html = http("https://shaw.sg/movie-details/1624")
-    lower = html.lower()
-    if "postponed" in lower:
+    """Shaw's movie-detail JSON carries a "[POSTPONED]" title prefix while
+    the film is postponed; booking open == prefix gone (+ showtimes live)."""
+    body = http(
+        f"https://snow-pwsm-legacy.sice.tech/get_movie_release?id={SHAW_MOVIE_ID}",
+        extra={"Accept": "application/json", "Origin": "https://shaw.sg",
+               "Referer": "https://shaw.sg/"},
+    )
+    data = json.loads(body)
+    title = data.get("primaryTitle", "")
+    if not MOVIE_RE.search(title):
+        # Wrong id / unexpected payload — surface it rather than false-alert.
+        return False, f"unexpected title {title!r}"
+    if "postponed" in title.lower():
         return False, "still marked POSTPONED"
-    kw = [k for k in POSITIVE_KEYWORDS if k in lower]
-    times = SHOWTIME_RE.findall(html)
-    if kw:
-        return True, f"keywords {kw}"
-    if len(times) >= 3:
-        return True, f"{len(times)} showtime-like entries"
-    return False, "no booking indicators"
+
+    # POSTPONED lifted. Confirm real showtimes exist before firing.
+    try:
+        times = http(
+            f"https://snow-pwsm-legacy.sice.tech/get_show_times?movieId={SHAW_MOVIE_ID}",
+            extra={"Accept": "application/json", "Origin": "https://shaw.sg",
+                   "Referer": "https://shaw.sg/"},
+        )
+        sessions = json.loads(times)
+        if isinstance(sessions, list) and sessions:
+            return True, f"POSTPONED lifted, {len(sessions)} showtimes live"
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Shaw/showtimes] {exc}", file=sys.stderr)
+    return True, "POSTPONED lifted from title"
 
 
 def check_gv() -> tuple[bool, str]:
-    """GV is API-driven. Movie appearing in nowshowing/advance-sales JSON
-    (rather than comingsoon only) = booking open."""
+    """GV is API-driven. Movie appearing in the nowshowing/advancesales
+    JSON feeds (it starts in comingsoon) = booking open. The feeds require
+    an Origin header or they reject with 'Unauthorized Request'."""
     for endpoint in ("nowshowing", "advancesales"):
         try:
             body = http(
                 f"https://www.gv.com.sg/.gv-api/{endpoint}",
                 data=b"{}",
                 extra={"Content-Type": "application/json",
-                       "x-requested-with": "XMLHttpRequest"},
+                       "Origin": "https://www.gv.com.sg"},
             )
-            if MOVIE_RE.search(body):
+            payload = json.loads(body)
+            if not payload.get("success"):
+                print(f"[GV/{endpoint}] {payload.get('errorMessage')}",
+                      file=sys.stderr)
+                continue
+            films = payload.get("data") or []
+            if any(MOVIE_RE.search(f.get("filmTitle", "")) for f in films):
                 return True, f"listed in GV {endpoint}"
         except Exception as exc:  # noqa: BLE001
             print(f"[GV/{endpoint}] {exc}", file=sys.stderr)
-    # Fallback: public movie pages
-    try:
-        body = http("https://www.gv.com.sg/GVBuyTickets")
-        if MOVIE_RE.search(body):
-            return True, "found on GV Buy Tickets page"
-    except Exception as exc:  # noqa: BLE001
-        print(f"[GV/buytickets] {exc}", file=sys.stderr)
     return False, "not in GV booking feeds yet"
 
 
