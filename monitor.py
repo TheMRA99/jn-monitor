@@ -119,11 +119,12 @@ TARGETS = [
 
 
 def send_email(subject: str, body: str) -> None:
-    host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.environ.get("SMTP_PORT", "587"))
+    # Unset GitHub secrets arrive as "" (not absent), so `or` the defaults in.
+    host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
+    port = int(os.environ.get("SMTP_PORT") or "587")
     user = os.environ["SMTP_USER"]
     password = os.environ["SMTP_PASS"]
-    to_addr = os.environ.get("ALERT_TO", user)
+    to_addr = os.environ.get("ALERT_TO") or user
 
     msg = MIMEText(body)
     msg["Subject"] = subject
