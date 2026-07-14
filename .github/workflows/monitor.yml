@@ -1,0 +1,38 @@
+name: jana-nayagan-monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 min (UTC; GitHub may delay a few min)
+  workflow_dispatch: {}       # manual test run
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run monitor
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: python monitor.py
+
+      - name: Persist alert state
+        run: |
+          if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
+            git config user.name "jn-monitor-bot"
+            git config user.email "actions@github.com"
+            git add state.json
+            git commit -m "alert fired"
+            git push
+          fi
