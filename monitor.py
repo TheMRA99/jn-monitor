@@ -412,29 +412,48 @@ def send_email(subject, body, to_addr=None):
         server.sendmail(user, [to_addr], msg.as_string())
 
 
+# Above this many new showtimes for one site, summarise instead of listing
+# every line (keeps the first "it's fully open" email readable).
+DETAIL_LIMIT = 25
+
+
 def compose(new_slots):
-    """Group new slots into a readable email body."""
+    """Group new slots into a readable email body. Small deltas are itemised
+    (exact new cinema/date/time); large initial dumps are summarised."""
     by_movie = {}
     for s in new_slots:
         by_movie.setdefault(s["movie"], {}).setdefault(
             (s["site"], s["region"], s["link"]), []).append(s)
 
-    lines = ["New ticket availability detected:\n"]
+    lines = ["New ticket availability:\n"]
     for movie in sorted(by_movie):
         lines.append(f"\U0001F3AC {movie}")
         for (site, region, link), items in by_movie[movie].items():
             tag = site if region in ("SG", "") else f"{site} (Johor)"
+            detailed = [it for it in items
+                        if it["cinema"] or it["date"] or it["time"]]
             lines.append(f"  ✅ OPEN on {tag}")
-            # group times by cinema+date
-            by_cd = {}
-            for it in items:
-                if it["cinema"] or it["date"] or it["time"]:
+
+            if not detailed:                       # bookable-level (Shaw/GV)
+                lines.append(f"       Book: {link}")
+                continue
+
+            if len(detailed) > DETAIL_LIMIT:       # summarise big dumps
+                cinemas = sorted({it["cinema"] for it in detailed if it["cinema"]})
+                dates = sorted({it["date"] for it in detailed if it["date"]})
+                span = f"{dates[0]} to {dates[-1]}" if dates else ""
+                lines.append(f"       {len(detailed)} showtimes across "
+                             f"{len(cinemas)} cinema(s){', ' + span if span else ''}")
+                lines.append(f"       Cinemas: {', '.join(cinemas)}")
+            else:                                  # itemise small deltas
+                by_cd = {}
+                for it in detailed:
                     by_cd.setdefault((it["cinema"], it["date"]), []).append(it["time"])
-            for (cinema, d), times in sorted(by_cd.items()):
-                times = [t for t in dict.fromkeys(times) if t]
-                where = " / ".join(x for x in (cinema, d) if x)
-                when = ("  " + ", ".join(times)) if times else ""
-                lines.append(f"       - {where}{when}")
+                for (cinema, d), times in sorted(by_cd.items()):
+                    times = [t for t in dict.fromkeys(times) if t]
+                    where = " / ".join(x for x in (cinema, d) if x)
+                    when = ("  " + ", ".join(times)) if times else ""
+                    lines.append(f"       - {where}{when}")
             lines.append(f"       Book: {link}")
         lines.append("")
     return "\n".join(lines)
