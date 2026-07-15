@@ -33,23 +33,27 @@ from email.mime.text import MIMEText
 
 STATE_FILE = "state.json"
 
-# --- movies to watch (add/remove freely) ---------------------------------
+# --- movies to watch ------------------------------------------------------
+# title : the film name (loose matching, see title_matches)
+# lang  : preferred language; used to skip clearly wrong-language versions
+#         (None = don't care)
+# to    : recipient — "jana" routes to ALERT_TO, anything else to yourself
 MOVIES = [
-    "Jana Nayagan",
-    "Spider-Man: Brand New Day",
-    "Toxic",
-    "Ramayana",
-    "King",
-    "Jailer 2",
-    "Avengers: Doomsday",
-    "I'm Game",
+    {"title": "Jana Nayagan",              "lang": "Tamil",   "to": "jana"},
+    {"title": "Spider-Man: Brand New Day", "lang": "English"},
+    {"title": "Toxic",                     "lang": "Tamil"},
+    {"title": "Ramayana",                  "lang": "Hindi"},
+    {"title": "King",                      "lang": "Hindi"},
+    {"title": "Jailer 2",                  "lang": "Tamil"},
+    {"title": "Avengers: Doomsday",        "lang": None},
+    {"title": "I'm Game",                  "lang": None},
 ]
 
-# Movies to stop watching (no more emails). Move a title here when done.
+# Titles to stop watching (no more emails). Add a title here when done.
 STOPPED: set[str] = set()
 
-# How many days ahead to scan for showtimes (advance sales).
-LOOKAHEAD_DAYS = 14
+# How many days ahead to scan for showtimes (advance sales open ~2-3 wks out).
+LOOKAHEAD_DAYS = 25
 
 # --- title matching -------------------------------------------------------
 # Bracketed qualifiers "(Tamil)" / "[IMAX]" are dropped; these standalone
@@ -87,15 +91,59 @@ def title_matches(target: str, site_title: str) -> bool:
     return all(QUALIFIER_RE.match(tok) for tok in s if tok != word)
 
 
-def watched() -> list[str]:
-    return [m for m in MOVIES if m not in STOPPED]
+# --- language disambiguation ---------------------------------------------
+LANG_TOKENS = {
+    "tamil": {"tamil", "tam", "tml"},
+    "hindi": {"hindi", "hin"},
+    "english": {"english", "eng"},
+    "telugu": {"telugu", "tel"},
+    "malayalam": {"malayalam", "mal"},
+    "kannada": {"kannada", "kan"},
+    "mandarin": {"mandarin", "mand", "chinese"},
+}
 
 
-def match_movie(site_title: str) -> str | None:
+def _langs_in(*texts) -> set[str]:
+    toks = set()
+    for t in texts:
+        toks |= set(re.split(r"[^a-z]+", (t or "").lower()))
+    return {lang for lang, keys in LANG_TOKENS.items() if toks & keys}
+
+
+def lang_ok(desired, *texts) -> bool:
+    """Conservative: only reject when the text clearly names a *different*
+    language. Missing/ambiguous language always passes (never lose a match)."""
+    if not desired:
+        return True
+    mentioned = _langs_in(*texts)
+    if not mentioned:
+        return True
+    return desired.lower() in mentioned
+
+
+def watched() -> list[dict]:
+    return [m for m in MOVIES if m["title"] not in STOPPED]
+
+
+def match_movie(site_title: str, *lang_texts) -> str | None:
     for m in watched():
-        if title_matches(m, site_title):
-            return m
+        if title_matches(m["title"], site_title) and \
+                lang_ok(m.get("lang"), site_title, *lang_texts):
+            return m["title"]
     return None
+
+
+def movie_lang(title: str) -> str | None:
+    return next((m.get("lang") for m in MOVIES if m["title"] == title), None)
+
+
+def recipient_for(title: str) -> str:
+    """Jana Nayagan -> ALERT_TO (reeslikefood); everything else -> yourself."""
+    self_addr = os.environ["SMTP_USER"]
+    for m in MOVIES:
+        if m["title"] == title and m.get("to") == "jana":
+            return os.environ.get("ALERT_TO") or self_addr
+    return self_addr
 
 
 # --- http -----------------------------------------------------------------
@@ -115,6 +163,21 @@ def http(url, data=None, extra=None):
     req = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=30, context=SSL_CTX) as resp:
         return resp.read().decode("utf-8", errors="ignore")
+
+
+def http_browser(url, data=None, extra=None):
+    """GV sits behind Cloudflare, which blocks urllib's TLS fingerprint. Use
+    curl_cffi to impersonate a real Chrome (falls back to plain http())."""
+    try:
+        from curl_cffi import requests as creq
+        headers = {"Accept-Language": "en"}
+        headers.update(extra or {})
+        method = "POST" if data is not None else "GET"
+        resp = creq.request(method, url, data=data, headers=headers,
+                            impersonate="chrome", timeout=30)
+        return resp.text
+    except ImportError:
+        return http(url, data=data, extra=extra)
 
 
 def upcoming_dates():
@@ -183,9 +246,9 @@ def collect_gv():
     slots = []
     seen = set()
     for endpoint in ("nowshowing", "advancesales"):
-        body = http(f"https://www.gv.com.sg/.gv-api/{endpoint}", data=b"{}",
-                    extra={"Content-Type": "application/json",
-                           "Origin": "https://www.gv.com.sg"})
+        body = http_browser(f"https://www.gv.com.sg/.gv-api/{endpoint}", data="{}",
+                            extra={"Content-Type": "application/json",
+                                   "Origin": "https://www.gv.com.sg"})
         payload = json.loads(body)
         if not payload.get("success"):
             print(f"[GV/{endpoint}] {payload.get('errorMessage')}", file=sys.stderr)
@@ -253,7 +316,6 @@ def collect_tgv():
         except Exception as exc:  # noqa: BLE001
             print(f"[TGV/dates {itemkey}] {exc}", file=sys.stderr)
             dates = []
-        found = False
         for d in dates[:LOOKAHEAD_DAYS]:
             for cid, cname in TGV_JOHOR_CINEMAS.items():
                 try:
@@ -275,10 +337,7 @@ def collect_tgv():
                                 t = iso[11:16] if "T" in iso else ""
                                 slots.append(slot(movie, "TGV", "Johor", cname,
                                                   d, t, link))
-                                found = True
-        if not found:
-            # bookable nationally but no Johor sessions parsed — one heads-up.
-            slots.append(slot(movie, "TGV", "Johor", "", "", "", link))
+    # No national fallback: MY sites alert only on real Johor showtimes.
     return slots
 
 
@@ -301,10 +360,10 @@ def collect_gsc():
         movie = match_movie(title)
         if not movie:
             continue
+        desired = movie_lang(movie)
         code = parent.get("code")
         link = (f"https://epaymentwebapp.gsc.com.my/showtime-by-movies/"
                 f"{code}/{_slugify(title)}?id={code}")
-        found = False
         for d in upcoming_dates():
             try:
                 locs = ET.fromstring(http(GSC_TIMES.format(code=code, d=d)))
@@ -315,19 +374,14 @@ def collect_gsc():
                 if ",JHR," not in loc.get("address", ""):
                     continue  # Johor cinemas only
                 cinema = loc.get("name", "")
-                times = []
-                for show in loc.iter("show"):
-                    ts = (show.get("timestr") or show.get("time") or "").strip()
-                    if ts:
-                        times.append(ts)
-                for t in dict.fromkeys(times):
-                    slots.append(slot(movie, "GSC", "Johor", cinema, d, t, link))
-                    found = True
-                if not times:  # location present but no parsed times
-                    slots.append(slot(movie, "GSC", "Johor", cinema, d, "", link))
-                    found = True
-        if not found:
-            slots.append(slot(movie, "GSC", "Johor", "", "", "", link))
+                for child in loc.findall("child"):
+                    if not lang_ok(desired, child.get("lang", "")):
+                        continue  # skip wrong-language version
+                    times = [(s.get("timestr") or s.get("time") or "").strip()
+                             for s in child.findall("show")]
+                    for t in dict.fromkeys(t for t in times if t):
+                        slots.append(slot(movie, "GSC", "Johor", cinema, d, t, link))
+    # No national fallback: MY sites alert only on real Johor showtimes.
     return slots
 
 
@@ -341,12 +395,12 @@ COLLECTORS = [
 
 
 # --- email ----------------------------------------------------------------
-def send_email(subject, body):
+def send_email(subject, body, to_addr=None):
     host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
     port = int(os.environ.get("SMTP_PORT") or "587")
     user = os.environ["SMTP_USER"]
     password = os.environ["SMTP_PASS"]
-    to_addr = os.environ.get("ALERT_TO") or user
+    to_addr = to_addr or os.environ.get("ALERT_TO") or user
 
     msg = MIMEText(body)
     msg["Subject"] = subject
@@ -404,8 +458,9 @@ def main():
         send_email("jn-monitor test alert",
                    "Test from your multi-movie ticket monitor. Alerts are "
                    "wired up. Real alerts name the movie, site, cinema and "
-                   "showtime, with a direct booking link.")
-        print("Test email sent.")
+                   "showtime, with a direct booking link.",
+                   to_addr=os.environ["SMTP_USER"])
+        print("Test email sent to self.")
         return 0
 
     all_slots = []
@@ -424,13 +479,21 @@ def main():
         print("No new availability.")
         return 0
 
-    body = compose(new_slots)
-    movies_hit = sorted({s["movie"] for s in new_slots})
-    print(f"New availability for: {', '.join(movies_hit)}")
-    send_email("Ticket availability update: " + ", ".join(movies_hit), body)
+    # Route by recipient: Jana Nayagan -> ALERT_TO, everything else -> you.
+    by_recipient = {}
+    for s in new_slots:
+        by_recipient.setdefault(recipient_for(s["movie"]), []).append(s)
+
+    for to_addr, slots_for in by_recipient.items():
+        movies_hit = sorted({s["movie"] for s in slots_for})
+        subject = "Ticket availability update: " + ", ".join(movies_hit)
+        send_email(subject, compose(slots_for), to_addr=to_addr)
+        print(f"Emailed {len(slots_for)} slot(s) for {', '.join(movies_hit)} "
+              f"-> {to_addr}")
+
     seen.update(slot_key(s) for s in all_slots)
     save_state(seen)
-    print(f"Emailed {len(new_slots)} new slot(s); state now has {len(seen)}.")
+    print(f"State now has {len(seen)} slots.")
     return 0
 
 

@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install --quiet certifi
+        run: pip install --quiet certifi curl_cffi
 
       - name: Run monitor
         env:
