@@ -23,6 +23,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install deps
+        run: pip install --quiet certifi
+
       - name: Run monitor
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -43,6 +46,6 @@ jobs:
             git config user.name "jn-monitor-bot"
             git config user.email "actions@github.com"
             git add state.json
-            git commit -m "alert fired"
+            git commit -m "update seen showtimes"
             git push
           fi

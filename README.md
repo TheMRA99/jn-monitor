@@ -1,38 +1,48 @@
-# Jana Nayagan SG ticket monitor
+# SG + Johor ticket monitor
 
-Runs free on GitHub Actions every 15 min. When Shaw or GV shows booking open,
-it emails your blast text, then stops alerting.
+Runs free on GitHub Actions every 15 min. Watches a list of movies across five
+cinema sites and **emails whenever a new cinema or a new showtime opens** for any
+of them — repeating every run until you stop watching that movie.
 
-## Setup (10 min, one-time)
+## Sites & coverage
 
-1. **Sender email**: use a Gmail (or other SMTP) account. For Gmail, create
-   an [App Password](https://myaccount.google.com/apppasswords) (needs
-   2-Step Verification enabled) — do NOT use your normal account password.
-2. **Repo**: create a private repo (e.g. `themra99/jn-monitor`), push these
-   three files.
-3. **Secrets**: repo → Settings → Secrets and variables → Actions → add:
-   - `SMTP_USER` — sender email address
+| Site | Region | Granularity |
+|------|--------|-------------|
+| Shaw Theatres | 🇸🇬 SG, all cinemas | bookable (first-open) |
+| Golden Village | 🇸🇬 SG, all cinemas | bookable (first-open) |
+| myCinemas | 🇸🇬 SG | per showtime |
+| TGV | 🇲🇾 Johor only | per cinema + showtime |
+| GSC | 🇲🇾 Johor only | per cinema + showtime |
+
+Malaysia sites are filtered to Johor cinemas only (TGV: Bukit Indah, Kulaijaya,
+Tasek Central, Tebrau City, Toppen; GSC: all Johor-Bahru-area cinemas).
+
+## Configure
+
+Edit the top of `monitor.py`:
+
+- `MOVIES` — the titles to watch. Loose matching handles `(Tamil)` suffixes,
+  `Spider-Man` vs `Spider Man`, sequel numbers, etc.
+- `STOPPED` — move a title here (or delete it from `MOVIES`) to stop its emails.
+
+## Setup (one-time)
+
+1. **Sender email**: a Gmail with an [App Password](https://myaccount.google.com/apppasswords)
+   (needs 2-Step Verification).
+2. Push this repo (private).
+3. **Secrets** → repo Settings → Secrets and variables → Actions:
+   - `SMTP_USER` — sender email
    - `SMTP_PASS` — app password
-   - `ALERT_TO` — recipient email (defaults to `SMTP_USER` if omitted)
-   - `SMTP_HOST` / `SMTP_PORT` — optional, default to Gmail
-     (`smtp.gmail.com` / `587`)
-4. **Test**: Actions tab → jana-nayagan-monitor → Run workflow. Logs should
-   show `open=False` per site (or an alert if it's already live).
+   - `ALERT_TO` — recipient email
+   - `SMTP_HOST` / `SMTP_PORT` — optional (default Gmail)
+4. **Test**: Actions → run workflow with `test_email = true` to get a test email.
 
-## Notes
+## How it works
 
-- Detection is heuristic (showtime patterns / "book now" / POSTPONED flag
-  gone). If a site blocks the scraper, the run logs the error and continues
-  with the other site.
-- Delete the repo or disable the workflow after you've booked.
+Each run collects the set of currently-open slots (movie × site × cinema × date ×
+time), diffs against `state.json` (the slots already emailed), and emails only the
+new ones. `state.json` is committed back by the workflow so memory persists.
 
-## Shaw + GV specifics
-
-- **Shaw**: watches the movie page directly (`shaw.sg/movie-details/1624`);
-  alerts when POSTPONED is gone and booking indicators appear.
-- **GV**: their site is API-driven — the script checks GV's nowshowing /
-  advance-sales feeds for "Jana Nayagan", with the Buy Tickets page as
-  fallback. Endpoints are best-effort (untested from sandbox): your first
-  manual "Run workflow" will show in the logs whether GV responds; if it
-  errors, Shaw detection still covers you since both open around the same
-  time here.
+- Detection uses each site's own JSON/XML backend (their HTML pages are empty JS
+  shells). No scraping of rendered pages.
+- A site failing (e.g. rate-limited) is logged and skipped; the others still run.
