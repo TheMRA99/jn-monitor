@@ -19,11 +19,18 @@ Tasek Central, Tebrau City, Toppen; GSC: all Johor-Bahru-area cinemas).
 
 ## Configure
 
-Edit the top of `monitor.py`:
+Edit `MOVIES` at the top of `monitor.py`. Each entry supports:
 
-- `MOVIES` — the titles to watch. Loose matching handles `(Tamil)` suffixes,
-  `Spider-Man` vs `Spider Man`, sequel numbers, etc.
-- `STOPPED` — move a title here (or delete it from `MOVIES`) to stop its emails.
+- `title` — the film (loose matching: `(Tamil)` suffixes, `Spider-Man` vs
+  `Spider Man`, sequel numbers, etc.)
+- `lang` — preferred language (`Tamil`/`Hindi`/`English`/…). Skips clearly
+  wrong-language versions; omit for "any".
+- `to` — recipient key(s): `"jana"` → ALERT_TO (reeslikefood), `"self"` → you.
+  A list emails several people, e.g. `["jana", "self"]`.
+- `sites` — restrict to named sites, e.g. `["Shaw Theatres", "Golden Village"]`;
+  omit to watch all five.
+
+Add a title to `STOPPED` (or delete it from `MOVIES`) to stop its emails.
 
 ## Setup (one-time)
 

@@ -35,12 +35,15 @@ STATE_FILE = "state.json"
 
 # --- movies to watch ------------------------------------------------------
 # title : the film name (loose matching, see title_matches)
-# lang  : preferred language; used to skip clearly wrong-language versions
-#         (None = don't care)
-# to    : recipient — "jana" routes to ALERT_TO, anything else to yourself
+# lang  : preferred language; skips clearly wrong-language versions (None = any)
+# to    : recipient key(s) — "jana" -> ALERT_TO (reeslikefood), "self" -> you.
+#         A list sends to several people. Defaults to ["self"].
+# sites : restrict to these site names (omit = all 5 sites).
+#         Names: "Shaw Theatres", "Golden Village", "myCinemas", "TGV", "GSC".
 MOVIES = [
-    {"title": "Jana Nayagan",              "lang": "Tamil",   "to": "jana"},
-    {"title": "Spider-Man: Brand New Day", "lang": "English"},
+    {"title": "Jana Nayagan",              "lang": "Tamil",   "to": ["jana", "self"]},
+    {"title": "Spider-Man: Brand New Day", "lang": "English",
+     "sites": ["Shaw Theatres", "Golden Village"]},
     {"title": "Toxic",                     "lang": "Tamil"},
     {"title": "Ramayana",                  "lang": "Hindi"},
     {"title": "King",                      "lang": "Hindi"},
@@ -125,11 +128,18 @@ def watched() -> list[dict]:
     return [m for m in MOVIES if m["title"] not in STOPPED]
 
 
-def match_movie(site_title: str, *lang_texts) -> str | None:
+def match_movie(site: str, site_title: str, *lang_texts) -> str | None:
+    """Match against watched movies, honouring per-movie `sites` scoping and
+    language. `site` is the calling collector's site name."""
     for m in watched():
-        if title_matches(m["title"], site_title) and \
-                lang_ok(m.get("lang"), site_title, *lang_texts):
-            return m["title"]
+        if not title_matches(m["title"], site_title):
+            continue
+        if not lang_ok(m.get("lang"), site_title, *lang_texts):
+            continue
+        allowed = m.get("sites")
+        if allowed and site not in allowed:
+            continue
+        return m["title"]
     return None
 
 
@@ -137,13 +147,17 @@ def movie_lang(title: str) -> str | None:
     return next((m.get("lang") for m in MOVIES if m["title"] == title), None)
 
 
-def recipient_for(title: str) -> str:
-    """Jana Nayagan -> ALERT_TO (reeslikefood); everything else -> yourself."""
+def recipients_for(title: str) -> list[str]:
+    """Resolve a movie's recipient key(s) to email addresses."""
     self_addr = os.environ["SMTP_USER"]
+    keymap = {"jana": os.environ.get("ALERT_TO") or self_addr, "self": self_addr}
     for m in MOVIES:
-        if m["title"] == title and m.get("to") == "jana":
-            return os.environ.get("ALERT_TO") or self_addr
-    return self_addr
+        if m["title"] == title:
+            keys = m.get("to", ["self"])
+            if isinstance(keys, str):
+                keys = [keys]
+            return list(dict.fromkeys(keymap.get(k, self_addr) for k in keys))
+    return [self_addr]
 
 
 # --- http -----------------------------------------------------------------
@@ -215,7 +229,7 @@ def collect_shaw():
                 for x in selectors if x.get("type") == 2}
     movies = [x for x in selectors if x.get("type") == 1]
     for mv in movies:
-        movie = match_movie(mv["name"])
+        movie = match_movie("Shaw Theatres", mv["name"])
         if not movie:
             continue
         code = mv["code"]
@@ -254,7 +268,7 @@ def collect_gv():
             print(f"[GV/{endpoint}] {payload.get('errorMessage')}", file=sys.stderr)
             continue
         for film in payload.get("data") or []:
-            movie = match_movie(film.get("filmTitle", ""))
+            movie = match_movie("Golden Village", film.get("filmTitle", ""))
             if movie and movie not in seen:
                 seen.add(movie)
                 # GV's showtime feed is coarse; alert at "now bookable" level.
@@ -269,7 +283,7 @@ def collect_mycinemas():
     links = dict.fromkeys(re.findall(
         r'href="(https://mycinemas\.sg/movie/([^"]+))"', html))
     for full, slug in links:
-        movie = match_movie(slug.replace("-", " "))
+        movie = match_movie("myCinemas", slug.replace("-", " "))
         if not movie:
             continue
         try:
@@ -304,7 +318,7 @@ def collect_tgv():
         extra={"Accept": "application/json"}))
     movies = payload.get("results", {}).get("movies", [])
     for mv in movies:
-        movie = match_movie(mv.get("name", ""))
+        movie = match_movie("TGV", mv.get("name", ""))
         if not movie:
             continue
         recid = mv.get("recid")
@@ -357,7 +371,7 @@ def collect_gsc():
     films_xml = ET.fromstring(http(GSC_MOVIES))
     for parent in films_xml.findall("parent"):
         title = parent.get("title", "")
-        movie = match_movie(title)
+        movie = match_movie("GSC", title)
         if not movie:
             continue
         desired = movie_lang(movie)
@@ -498,10 +512,12 @@ def main():
         print("No new availability.")
         return 0
 
-    # Route by recipient: Jana Nayagan -> ALERT_TO, everything else -> you.
+    # Route by recipient. A movie may have several recipients (Jana Nayagan
+    # goes to both reeslikefood and you); each gets the relevant slots.
     by_recipient = {}
     for s in new_slots:
-        by_recipient.setdefault(recipient_for(s["movie"]), []).append(s)
+        for addr in recipients_for(s["movie"]):
+            by_recipient.setdefault(addr, []).append(s)
 
     for to_addr, slots_for in by_recipient.items():
         movies_hit = sorted({s["movie"] for s in slots_for})
