@@ -25,8 +25,8 @@ Edit `MOVIES` at the top of `monitor.py`. Each entry supports:
   `Spider Man`, sequel numbers, etc.)
 - `lang` — preferred language (`Tamil`/`Hindi`/`English`/…). Skips clearly
   wrong-language versions; omit for "any".
-- `to` — recipient key(s): `"jana"` → ALERT_TO (reeslikefood), `"self"` → you.
-  A list emails several people, e.g. `["jana", "self"]`.
+- `to` — recipient key(s): `"jana"` → the `ALERT_TO` secret, `"self"` → the
+  `SMTP_USER` sender. A list emails several people, e.g. `["jana", "self"]`.
 - `sites` — restrict to named sites, e.g. `["Shaw Theatres", "Golden Village"]`;
   omit to watch all five.
 
