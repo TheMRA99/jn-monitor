@@ -34,16 +34,21 @@ from email.mime.text import MIMEText
 STATE_FILE = "state.json"
 
 # --- movies to watch ------------------------------------------------------
-# title : the film name (loose matching, see title_matches)
-# lang  : preferred language; skips clearly wrong-language versions (None = any)
-# to    : recipient key(s) — "jana" -> ALERT_TO (reeslikefood), "self" -> you.
-#         A list sends to several people. Defaults to ["self"].
-# sites : restrict to these site names (omit = all 5 sites).
-#         Names: "Shaw Theatres", "Golden Village", "myCinemas", "TGV", "GSC".
+# title   : the film name (loose matching, see title_matches)
+# lang    : preferred language; skips wrong-language versions (None = any)
+# to      : recipient key(s) — "rees" -> ALERT_TO (reeslikefood), "self" -> you.
+#           A list sends to several people. Defaults to ["self"].
+# sites   : restrict to these site names (omit = all 5 sites).
+#           Names: "Shaw Theatres", "Golden Village", "myCinemas", "TGV", "GSC".
+# subs    : "eng" -> only showings that display English subtitles (Shaw).
+# premium : True -> only premium showings (IMAX / Lumiere / premiere halls) so
+#           you get the best screen, sound and seats (Shaw).
 MOVIES = [
-    {"title": "Jana Nayagan",              "lang": "Tamil",   "to": ["jana", "self"]},
+    {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
+     "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
     {"title": "Spider-Man: Brand New Day", "lang": "English",
-     "sites": ["Shaw Theatres", "Golden Village"]},
+     "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
+     "subs": "eng", "premium": True},
     {"title": "Toxic",                     "lang": "Tamil"},
     {"title": "Ramayana",                  "lang": "Hindi"},
     {"title": "King",                      "lang": "Hindi"},
@@ -147,10 +152,14 @@ def movie_lang(title: str) -> str | None:
     return next((m.get("lang") for m in MOVIES if m["title"] == title), None)
 
 
+def movie_conf(title: str) -> dict:
+    return next((m for m in MOVIES if m["title"] == title), {})
+
+
 def recipients_for(title: str) -> list[str]:
     """Resolve a movie's recipient key(s) to email addresses."""
     self_addr = os.environ["SMTP_USER"]
-    keymap = {"jana": os.environ.get("ALERT_TO") or self_addr, "self": self_addr}
+    keymap = {"rees": os.environ.get("ALERT_TO") or self_addr, "self": self_addr}
     for m in MOVIES:
         if m["title"] == title:
             keys = m.get("to", ["self"])
@@ -220,6 +229,16 @@ def slot_key(s):
 SHAW_HDRS = {"Accept": "application/json", "Origin": "https://shaw.sg",
              "Referer": "https://shaw.sg/"}
 SHAW_BASE = "https://snow-pwsm-legacy.sice.tech"
+# Subtitle codes that include English (NOSB = no subtitles -> excluded).
+ENG_SUB_CODES = {"ENSB", "ECSB", "ELSB"}
+# Premium screen/sound/seat indicators.
+PREMIUM_FORMATS = {"IMLS", "IMAX", "IMGT"}          # IMAX variants
+PREMIUM_VENUE_KW = ("imax", "lumiere", "premiere", "dolby", "atmos", "gold")
+
+
+def _shaw_premium(fmt, venue):
+    return fmt in PREMIUM_FORMATS or any(k in venue.lower()
+                                         for k in PREMIUM_VENUE_KW)
 
 
 def collect_shaw():
@@ -232,6 +251,9 @@ def collect_shaw():
         movie = match_movie("Shaw Theatres", mv["name"])
         if not movie:
             continue
+        conf = movie_conf(movie)
+        want_eng = conf.get("subs") == "eng"
+        want_prem = conf.get("premium")
         code = mv["code"]
         link = f"https://shaw.sg/movie-details/{code}"
         got_times = False
@@ -241,13 +263,21 @@ def collect_shaw():
             for g in groups:
                 if str(g.get("movieId")) != str(code):
                     continue
-                for stime in g.get("showTimes", []):
-                    cinema = theatres.get(str(stime.get("locationId")),
-                                          stime.get("locationVenueName", "Shaw"))
-                    slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
-                                      stime.get("displayDate", ""),
-                                      stime.get("displayTime", ""), link))
+                for st in g.get("showTimes", []):
                     got_times = True
+                    venue = st.get("locationVenueName", "")
+                    fmt = st.get("formatCode", "")
+                    if want_eng and st.get("subtitleCode") not in ENG_SUB_CODES:
+                        continue
+                    if want_prem and not _shaw_premium(fmt, venue):
+                        continue
+                    # premium movies get the exact hall (shows IMAX/Lumiere);
+                    # others get the (grouped) theatre name.
+                    cinema = venue if want_prem else theatres.get(
+                        str(st.get("locationId")), venue or "Shaw")
+                    slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
+                                      st.get("displayDate", ""),
+                                      st.get("displayTime", ""), link))
         except Exception as exc:  # noqa: BLE001
             print(f"[Shaw/showtimes {code}] {exc}", file=sys.stderr)
         if not got_times:
