@@ -2,7 +2,7 @@ name: jana-nayagan-monitor
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 min (UTC; GitHub may delay a few min)
+    - cron: "*/5 * * * *"    # every 5 min (fastest reliable; GitHub may delay under load)
   workflow_dispatch:          # manual run
     inputs:
       test_email:

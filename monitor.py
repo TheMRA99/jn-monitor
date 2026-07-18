@@ -233,9 +233,10 @@ SHAW_HDRS = {"Accept": "application/json", "Origin": "https://shaw.sg",
 SHAW_BASE = "https://snow-pwsm-legacy.sice.tech"
 # Subtitle codes that include English (NOSB = no subtitles -> excluded).
 ENG_SUB_CODES = {"ENSB", "ECSB", "ELSB"}
-# Premium screen/sound/seat indicators.
+# Top-tier SCREENS only (best picture + sound) — IMAX at Shaw. Recliner-seat
+# halls (Lumiere/premiere) are deliberately excluded: comfy seats, small screens.
 PREMIUM_FORMATS = {"IMLS", "IMAX", "IMGT"}          # IMAX variants
-PREMIUM_VENUE_KW = ("imax", "lumiere", "premiere", "dolby", "atmos", "gold")
+PREMIUM_VENUE_KW = ("imax", "dolby", "atmos")
 
 
 def _shaw_premium(fmt, venue):
@@ -289,8 +290,9 @@ def collect_shaw():
 
 
 GV_LINK = "https://www.gv.com.sg/GVBuyTickets"
-# GV models premium experiences as named cinemas.
-GV_PREMIUM_KW = ("gvmax", "gold class", "dolby", "atmos", "deluxe")
+# Top-tier SCREENS only at GV: GVmax and GVmax Dolby Atmos. Gold Class / Deluxe
+# (premium seats, standard screens) are deliberately excluded.
+GV_PREMIUM_KW = ("gvmax", "dolby", "atmos")
 
 
 def _gv(path):
