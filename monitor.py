@@ -49,11 +49,13 @@ MOVIES = [
     {"title": "Spider-Man: Brand New Day", "lang": "English",
      "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
      "subs": "eng", "premium": True},
+    {"title": "Avengers: Doomsday", "lang": "English",
+     "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
+     "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
     {"title": "Toxic",                     "lang": "Tamil"},
     {"title": "Ramayana",                  "lang": "Hindi"},
     {"title": "King",                      "lang": "Hindi"},
     {"title": "Jailer 2",                  "lang": "Tamil"},
-    {"title": "Avengers: Doomsday",        "lang": None},
     {"title": "I'm Game",                  "lang": None},
 ]
 
@@ -286,24 +288,73 @@ def collect_shaw():
     return slots
 
 
+GV_LINK = "https://www.gv.com.sg/GVBuyTickets"
+# GV models premium experiences as named cinemas.
+GV_PREMIUM_KW = ("gvmax", "gold class", "dolby", "atmos", "deluxe")
+
+
+def _gv(path):
+    body = http_browser(f"https://www.gv.com.sg/.gv-api/{path}", data="{}",
+                        extra={"Content-Type": "application/json",
+                               "Origin": "https://www.gv.com.sg"})
+    return json.loads(body)
+
+
+def _gv_date(s):  # "18-07-2026" -> "2026-07-18"
+    p = s.split("-")
+    return f"{p[2]}-{p[1]}-{p[0]}" if len(p) == 3 else s
+
+
 def collect_gv():
     slots = []
-    seen = set()
+    # 1. Which watched movies are bookable on GV (now-showing / advance sales)?
+    bookable = set()
     for endpoint in ("nowshowing", "advancesales"):
-        body = http_browser(f"https://www.gv.com.sg/.gv-api/{endpoint}", data="{}",
-                            extra={"Content-Type": "application/json",
-                                   "Origin": "https://www.gv.com.sg"})
-        payload = json.loads(body)
+        payload = _gv(endpoint)
         if not payload.get("success"):
             print(f"[GV/{endpoint}] {payload.get('errorMessage')}", file=sys.stderr)
             continue
         for film in payload.get("data") or []:
             movie = match_movie("Golden Village", film.get("filmTitle", ""))
-            if movie and movie not in seen:
-                seen.add(movie)
-                # GV's showtime feed is coarse; alert at "now bookable" level.
-                slots.append(slot(movie, "Golden Village", "SG", "", "", "",
-                                  "https://www.gv.com.sg/GVBuyTickets"))
+            if movie:
+                bookable.add(movie)
+    if not bookable:
+        return slots
+
+    # 2. Same-day session detail (GV only exposes today's feed). Used to give
+    #    premium/subtitle-filtered showtimes for movies that ask for them.
+    detailed = set()
+    want_detail = {m for m in bookable
+                   if movie_conf(m).get("premium") or movie_conf(m).get("subs")}
+    if want_detail:
+        try:
+            names = {c["id"]: c["name"] for c in (_gv("cinemas").get("data") or [])}
+            bt = _gv("v2buytickets").get("data", {})
+            for c in bt.get("cinemas") or []:
+                cname = names.get(c["id"], "")
+                is_prem = any(k in cname.lower() for k in GV_PREMIUM_KW)
+                for m in c.get("movies") or []:
+                    movie = match_movie("Golden Village", m.get("filmTitle", ""))
+                    if movie not in want_detail:
+                        continue
+                    conf = movie_conf(movie)
+                    if conf.get("premium") and not is_prem:
+                        continue
+                    if conf.get("subs") == "eng" and \
+                            "English" not in (m.get("subTitles") or []):
+                        continue
+                    for t in m.get("times") or []:
+                        slots.append(slot(movie, "Golden Village", "SG", cname,
+                                          _gv_date(t.get("showDate", "")),
+                                          t.get("time12", ""), GV_LINK))
+                        detailed.add(movie)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[GV/sessions] {exc}", file=sys.stderr)
+
+    # 3. Bookable-level alert for movies without same-day session detail yet
+    #    (advance sales are future-dated and not in GV's same-day feed).
+    for movie in bookable - detailed:
+        slots.append(slot(movie, "Golden Village", "SG", "", "", "", GV_LINK))
     return slots
 
 
