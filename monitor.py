@@ -511,6 +511,15 @@ def send_email(subject, body, to_addr=None):
 # every line (keeps the first "it's fully open" email readable).
 DETAIL_LIMIT = 25
 
+# Reference "sweet spot" seat guidance for premium (immersive) movies.
+SEAT_TIP = (
+    "   \U0001F3A7 Best seats: dead-centre columns, ~2/3 of the way back — the "
+    "audio/visual reference spot (a row or two behind the exact middle). "
+    "IMAX: sit a touch further back so the screen fills your view. "
+    "Dolby Atmos: centre-back for the truest surround + overhead mix. "
+    "Avoid the front third and the very back/under-balcony."
+)
+
 
 def compose(new_slots):
     """Group new slots into a readable email body. Small deltas are itemised
@@ -523,6 +532,8 @@ def compose(new_slots):
     lines = ["New ticket availability:\n"]
     for movie in sorted(by_movie):
         lines.append(f"\U0001F3AC {movie}")
+        if movie_conf(movie).get("premium"):
+            lines.append(SEAT_TIP)
         for (site, region, link), items in by_movie[movie].items():
             tag = site if region in ("SG", "") else f"{site} (Johor)"
             detailed = [it for it in items
