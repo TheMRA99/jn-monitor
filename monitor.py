@@ -259,7 +259,7 @@ def collect_shaw():
         want_prem = conf.get("premium")
         code = mv["code"]
         link = f"https://shaw.sg/movie-details/{code}"
-        got_times = False
+        emitted = 0
         try:
             groups = json.loads(
                 http(f"{SHAW_BASE}/get_show_times?movieCode={code}", extra=SHAW_HDRS))
@@ -267,7 +267,6 @@ def collect_shaw():
                 if str(g.get("movieId")) != str(code):
                     continue
                 for st in g.get("showTimes", []):
-                    got_times = True
                     venue = st.get("locationVenueName", "")
                     fmt = st.get("formatCode", "")
                     if want_eng and st.get("subtitleCode") not in ENG_SUB_CODES:
@@ -281,10 +280,13 @@ def collect_shaw():
                     slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
                                       st.get("displayDate", ""),
                                       st.get("displayTime", ""), link))
+                    emitted += 1
         except Exception as exc:  # noqa: BLE001
             print(f"[Shaw/showtimes {code}] {exc}", file=sys.stderr)
-        if not got_times:
-            # bookable but no showtimes parsed yet — still worth one alert
+        if emitted == 0:
+            # Bookable but no matching showtimes yet (endpoint flaky, or only
+            # non-premium/non-Eng showings so far) — never miss the OPENING:
+            # always fire a booking-open alert.
             slots.append(slot(movie, "Shaw Theatres", "SG", "", "", "", link))
     return slots
 

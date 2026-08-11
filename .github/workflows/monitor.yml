@@ -59,6 +59,9 @@ jobs:
           git config user.email "actions@github.com"
           END=$(( $(date +%s) + 18000 ))     # run for ~5 hours
           while [ "$(date +%s)" -lt "$END" ]; do
+            # Pull latest so config/code edits (stop a movie, fixes) take effect
+            # within one cycle without needing a restart.
+            git pull --rebase --autostash origin master || true
             python monitor.py || true
             if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
               git add state.json
