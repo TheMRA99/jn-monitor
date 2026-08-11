@@ -1,9 +1,13 @@
 name: jana-nayagan-monitor
 
+# GitHub throttles `schedule` heavily (often only ~hourly), which is too slow
+# for FDFS on-sales. So each run instead POLLS IN A LOOP every 3 min for ~5
+# hours. The hourly-ish schedule just restarts the loop; concurrency keeps a
+# single loop alive so runs never pile up.
 on:
   schedule:
-    - cron: "*/5 * * * *"    # every 5 min (fastest reliable; GitHub may delay under load)
-  workflow_dispatch:          # manual run
+    - cron: "0 * * * *"        # hourly restart / safety net
+  workflow_dispatch:
     inputs:
       test_email:
         description: "Send a test email and exit (does not touch alert state)"
@@ -13,9 +17,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: monitor
+  cancel-in-progress: false     # let the active loop finish; only superseded
+                                # *pending* duplicates drop (no active run is killed)
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 320
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +36,18 @@ jobs:
       - name: Install deps
         run: pip install --quiet certifi curl_cffi
 
-      - name: Run monitor
+      - name: Test email
+        if: ${{ github.event.inputs.test_email == 'true' }}
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: python monitor.py --test
+
+      - name: Monitor loop (poll every 3 min for ~5h)
+        if: ${{ github.event.inputs.test_email != 'true' }}
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -34,18 +55,16 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_TO: ${{ secrets.ALERT_TO }}
         run: |
-          if [[ "${{ github.event.inputs.test_email }}" == "true" ]]; then
-            python monitor.py --test
-          else
-            python monitor.py
-          fi
-
-      - name: Persist alert state
-        run: |
-          if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
-            git config user.name "jn-monitor-bot"
-            git config user.email "actions@github.com"
-            git add state.json
-            git commit -m "update seen showtimes"
-            git push
-          fi
+          git config user.name "jn-monitor-bot"
+          git config user.email "actions@github.com"
+          END=$(( $(date +%s) + 18000 ))     # run for ~5 hours
+          while [ "$(date +%s)" -lt "$END" ]; do
+            python monitor.py || true
+            if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
+              git add state.json
+              git commit -m "update seen showtimes" || true
+              git pull --rebase --autostash origin master || true
+              git push || true
+            fi
+            sleep 180
+          done

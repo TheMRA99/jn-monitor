@@ -52,11 +52,11 @@ MOVIES = [
     {"title": "Avengers: Doomsday", "lang": "English",
      "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
      "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
-    {"title": "Toxic",                     "lang": "Tamil"},
-    {"title": "Ramayana",                  "lang": "Hindi"},
-    {"title": "King",                      "lang": "Hindi"},
-    {"title": "Jailer 2",                  "lang": "Tamil"},
-    {"title": "I'm Game",                  "lang": None},
+    {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
+    {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
+    {"title": "I'm Game", "lang": None,    "to": ["rees", "self"]},
+    {"title": "Ramayana", "lang": "Hindi"},
+    {"title": "King",     "lang": "Hindi"},
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
