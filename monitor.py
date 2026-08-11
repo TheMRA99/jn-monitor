@@ -570,16 +570,45 @@ def compose(new_slots):
 
 
 # --- main -----------------------------------------------------------------
+# Only alert about showings within the first N days of a movie's opening date
+# (opening day + 3 = the opening-weekend window).
+WINDOW_DAYS = 4
+
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE) as f:
-            return set(json.load(f).get("seen", []))
-    return set()
+            d = json.load(f)
+            return set(d.get("seen", [])), dict(d.get("opening", {}))
+    return set(), {}
 
 
-def save_state(seen):
+def save_state(seen, opening):
     with open(STATE_FILE, "w") as f:
-        json.dump({"seen": sorted(seen)}, f, indent=0)
+        json.dump({"seen": sorted(seen), "opening": opening}, f, indent=0)
+
+
+def apply_opening_window(all_slots, opening):
+    """Anchor each movie's opening date to the earliest showing ever seen (kept
+    in `opening`), then drop showings past opening + (WINDOW_DAYS-1). Slots with
+    no date (booking-open alerts, dateless sites) always pass."""
+    for s in all_slots:
+        d = s["date"]
+        if d and (s["movie"] not in opening or d < opening[s["movie"]]):
+            opening[s["movie"]] = d
+    kept = []
+    for s in all_slots:
+        if not s["date"]:
+            kept.append(s)
+            continue
+        od = opening.get(s["movie"])
+        try:
+            last = date.fromisoformat(od) + timedelta(days=WINDOW_DAYS - 1)
+            if date.fromisoformat(s["date"]) <= last:
+                kept.append(s)
+        except Exception:  # noqa: BLE001 — unparseable date: keep, don't lose it
+            kept.append(s)
+    return kept
 
 
 def main():
@@ -601,11 +630,13 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"[{name}] FAILED: {exc}", file=sys.stderr)
 
-    seen = load_state()
+    seen, opening = load_state()
+    all_slots = apply_opening_window(all_slots, opening)
     new_slots = [s for s in all_slots if slot_key(s) not in seen]
 
     if not new_slots:
         print("No new availability.")
+        save_state(seen, opening)   # persist any newly-learned opening dates
         return 0
 
     # Route by recipient. A movie may have several recipients (Jana Nayagan
@@ -623,7 +654,7 @@ def main():
               f"-> {to_addr}")
 
     seen.update(slot_key(s) for s in all_slots)
-    save_state(seen)
+    save_state(seen, opening)
     print(f"State now has {len(seen)} slots.")
     return 0
 
