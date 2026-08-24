@@ -795,7 +795,11 @@
 "Spider-Man: Brand New Day|Golden Village|GVmax, VivoCity|2026-07-30|5:25PM",
 "Spider-Man: Brand New Day|Golden Village|GVmax, VivoCity|2026-07-30|8:40PM",
 "Spider-Man: Brand New Day|Golden Village|||",
-"Spider-Man: Brand New Day|Shaw Theatres|||"
+"Spider-Man: Brand New Day|Shaw Theatres|||",
+"Toxic|TGV|Tebrau City|2026-08-26|19:15",
+"Toxic|TGV|Tebrau City|2026-08-26|23:15"
 ],
-"opening": {}
+"opening": {
+"Toxic": "2026-08-26"
+}
 }
