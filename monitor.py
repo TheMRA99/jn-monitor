@@ -55,6 +55,11 @@ MOVIES = [
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
     {"title": "I'm Game", "lang": None,    "to": ["rees", "self"]},
+    # Nani, Telugu; SG release Sep 24 2026 (per public listings — verify closer
+    # to date, as regional release dates shift).
+    {"title": "The Paradise", "lang": None, "to": ["rees", "self"]},
+    # Prabhas, pan-Indian (Telugu/Tamil/Kannada/Malayalam/Hindi); Dec 3 2026.
+    {"title": "Fauzi",        "lang": None, "to": ["rees", "self"]},
     {"title": "Ramayana", "lang": "Hindi"},
     {"title": "King",     "lang": "Hindi"},
 ]
@@ -76,12 +81,21 @@ COMMON_WORDS = {"king", "day", "war", "one", "end", "home", "the", "up", "it"}
 QUALIFIER_RE = re.compile(r"^(?:\d+|i{1,3}|iv|vi{0,3}|part|chapter|vol|volume|final)$")
 
 
+LEADING_ARTICLES = {"the", "a", "an"}
+
+
 def normalize(text: str) -> list[str]:
     text = text.lower()
     text = re.sub(r"[’'`]", "", text)                   # I'm -> im (no split)
     text = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text)   # drop (..) and [..]
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    return [t for t in text.split() if t and t not in FORMAT_TAGS]
+    tokens = [t for t in text.split() if t and t not in FORMAT_TAGS]
+    # Drop a leading article: cinema listings inconsistently keep/drop "The"
+    # ("The Paradise" vs "Paradise") — strip on both sides so it never causes
+    # a false negative. Applied consistently to target and site titles alike.
+    if len(tokens) > 1 and tokens[0] in LEADING_ARTICLES:
+        tokens = tokens[1:]
+    return tokens
 
 
 def title_matches(target: str, site_title: str) -> bool:

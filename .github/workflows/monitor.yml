@@ -1,12 +1,19 @@
 name: jana-nayagan-monitor
 
-# GitHub throttles `schedule` heavily (often only ~hourly), which is too slow
-# for FDFS on-sales. So each run instead POLLS IN A LOOP every 3 min for ~5
-# hours. The hourly-ish schedule just restarts the loop; concurrency keeps a
-# single loop alive so runs never pile up.
+# Self-chaining design. A single long-running job (5h loop) turned out to be
+# fragile: on 2026-08-31 the runner was killed mid-loop after ~3h with no
+# error (an infra reclaim, not a script bug), and GitHub's `schedule:` cron
+# then failed to restart it for 1h+ afterward too — a silent multi-hour outage.
+#
+# Now each run does ONE check (a few seconds) and, on success, dispatches the
+# NEXT run itself via a direct API call ~3 min later, then exits. Continuity
+# comes from that direct dispatch, not from GitHub's cron (which is known to
+# be delayed/dropped under load). `schedule:` stays only as a safety net to
+# restart the chain if a link ever dies before it can dispatch the next one —
+# worst case gap is now one cron interval, not unbounded.
 on:
   schedule:
-    - cron: "0 * * * *"        # hourly restart / safety net
+    - cron: "*/15 * * * *"     # safety net only — restarts the chain if broken
   workflow_dispatch:
     inputs:
       test_email:
@@ -16,16 +23,16 @@ on:
 
 permissions:
   contents: write
+  actions: write               # required to self-dispatch the next run
 
 concurrency:
   group: monitor
-  cancel-in-progress: false     # let the active loop finish; only superseded
-                                # *pending* duplicates drop (no active run is killed)
+  cancel-in-progress: true     # a fresh chain link supersedes a stale one
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 320
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +53,7 @@ jobs:
           ALERT_TO: ${{ secrets.ALERT_TO }}
         run: python monitor.py --test
 
-      - name: Monitor loop (poll every 3 min for ~5h)
+      - name: Run monitor
         if: ${{ github.event.inputs.test_email != 'true' }}
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -54,20 +61,24 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: python monitor.py
+
+      - name: Persist alert state
+        if: ${{ github.event.inputs.test_email != 'true' }}
         run: |
-          git config user.name "jn-monitor-bot"
-          git config user.email "actions@github.com"
-          END=$(( $(date +%s) + 18000 ))     # run for ~5 hours
-          while [ "$(date +%s)" -lt "$END" ]; do
-            # Pull latest so config/code edits (stop a movie, fixes) take effect
-            # within one cycle without needing a restart.
+          if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
+            git config user.name "jn-monitor-bot"
+            git config user.email "actions@github.com"
+            git add state.json
+            git commit -m "update seen showtimes"
             git pull --rebase --autostash origin master || true
-            python monitor.py || true
-            if [[ -n "$(git status --porcelain state.json 2>/dev/null)" ]]; then
-              git add state.json
-              git commit -m "update seen showtimes" || true
-              git pull --rebase --autostash origin master || true
-              git push || true
-            fi
-            sleep 180
-          done
+            git push
+          fi
+
+      - name: Chain next run (~3 min)
+        if: ${{ github.event.inputs.test_email != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 180
+          gh workflow run monitor.yml --repo ${{ github.repository }}
