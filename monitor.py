@@ -62,6 +62,8 @@ MOVIES = [
     {"title": "Fauzi",        "lang": None, "to": ["rees", "self"]},
     {"title": "Ramayana", "lang": "Hindi"},
     {"title": "King",     "lang": "Hindi"},
+    # Kunal Kemmu/Preity G Zinta/Sparsh Shrivastava, Hindi; releases Sep 18 2026.
+    {"title": "Vibe", "lang": "Hindi"},
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
