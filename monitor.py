@@ -43,8 +43,10 @@ STATE_FILE = "state.json"
 # subs    : "eng" -> only showings that display English subtitles (Shaw).
 # premium : True -> only premium showings (IMAX / Lumiere / premiere halls) so
 #           you get the best screen, sound and seats (Shaw).
-# days    : restrict showings to these weekdays only, e.g. ["Sunday"]. Dateless
-#           "booking open" alerts (no specific date) always pass through.
+# days    : restrict to these RECURRING weekdays, e.g. ["Sunday"] = every Sun.
+# dates   : restrict to these EXACT ISO dates, e.g. ["2026-09-06"] = only that
+#           one date (not every Sunday). Dateless "booking open" alerts
+#           (no specific date) always pass through either restriction.
 MOVIES = [
     {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
      "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
@@ -56,9 +58,9 @@ MOVIES = [
      "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
-    # JB+SG, Sunday showings only.
+    # JB+SG, this Sunday (6 Sep 2026) only — not a recurring weekly watch.
     {"title": "I'm Game", "lang": ["Tamil", "Malayalam"],
-     "to": ["rees", "self"], "days": ["Sunday"]},
+     "to": ["rees", "self"], "dates": ["2026-09-06"]},
     # Nani, Telugu; SG release Sep 24 2026 (per public listings — verify closer
     # to date, as regional release dates shift).
     {"title": "The Paradise", "lang": None, "to": ["rees", "self"]},
@@ -640,19 +642,28 @@ WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
 
 
 def apply_day_filter(all_slots):
-    """Per-movie `days` restricts showings to named weekdays (e.g. ["Sunday"]
-    for a Sunday-only watch). Dateless slots (booking-open alerts, myCinemas)
-    always pass — losing the "it's open" signal would be worse than an
-    unfiltered one-off alert."""
+    """Per-movie schedule restriction, two independent optional forms:
+      - `days`:  recurring weekday name(s), e.g. ["Sunday"] -> every Sunday.
+      - `dates`: exact ISO date(s), e.g. ["2026-09-06"] -> only that date.
+    Both may be combined (AND); neither set means no restriction. Dateless
+    slots (booking-open alerts, myCinemas) always pass — losing the "it's
+    open" signal would be worse than an unfiltered one-off alert."""
     kept = []
     for s in all_slots:
-        days = movie_conf(s["movie"]).get("days")
-        if not days or not s["date"]:
+        conf = movie_conf(s["movie"])
+        days, dates = conf.get("days"), conf.get("dates")
+        if not s["date"] or (not days and not dates):
             kept.append(s)
             continue
-        allowed = {WEEKDAYS[d.lower()] for d in days if d.lower() in WEEKDAYS}
         try:
-            if date.fromisoformat(s["date"]).weekday() in allowed:
+            d = date.fromisoformat(s["date"])
+            ok = True
+            if days:
+                allowed = {WEEKDAYS[x.lower()] for x in days if x.lower() in WEEKDAYS}
+                ok = d.weekday() in allowed
+            if dates:
+                ok = ok and s["date"] in dates
+            if ok:
                 kept.append(s)
         except Exception:  # noqa: BLE001 — unparseable date: keep, don't lose it
             kept.append(s)
