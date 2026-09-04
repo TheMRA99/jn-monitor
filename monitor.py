@@ -57,7 +57,8 @@ MOVIES = [
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
     # JB+SG, Sunday showings only.
-    {"title": "I'm Game", "lang": None, "to": ["rees", "self"], "days": ["Sunday"]},
+    {"title": "I'm Game", "lang": ["Tamil", "Malayalam"],
+     "to": ["rees", "self"], "days": ["Sunday"]},
     # Nani, Telugu; SG release Sep 24 2026 (per public listings — verify closer
     # to date, as regional release dates shift).
     {"title": "The Paradise", "lang": None, "to": ["rees", "self"]},
@@ -140,14 +141,18 @@ def _langs_in(*texts) -> set[str]:
 
 
 def lang_ok(desired, *texts) -> bool:
-    """Conservative: only reject when the text clearly names a *different*
-    language. Missing/ambiguous language always passes (never lose a match)."""
+    """Conservative: only reject when the text clearly names a language that
+    isn't wanted. `desired` may be a single language string or a list of
+    acceptable languages (OR match, e.g. ["Tamil", "Malayalam"]). Missing/
+    ambiguous language in the text always passes (never lose a match)."""
     if not desired:
         return True
+    wanted = {desired.lower()} if isinstance(desired, str) else \
+        {d.lower() for d in desired}
     mentioned = _langs_in(*texts)
     if not mentioned:
         return True
-    return desired.lower() in mentioned
+    return bool(mentioned & wanted)
 
 
 def watched() -> list[dict]:
@@ -169,7 +174,7 @@ def match_movie(site: str, site_title: str, *lang_texts) -> str | None:
     return None
 
 
-def movie_lang(title: str) -> str | None:
+def movie_lang(title: str) -> str | list[str] | None:
     return next((m.get("lang") for m in MOVIES if m["title"] == title), None)
 
 
