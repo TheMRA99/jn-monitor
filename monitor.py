@@ -43,6 +43,8 @@ STATE_FILE = "state.json"
 # subs    : "eng" -> only showings that display English subtitles (Shaw).
 # premium : True -> only premium showings (IMAX / Lumiere / premiere halls) so
 #           you get the best screen, sound and seats (Shaw).
+# days    : restrict showings to these weekdays only, e.g. ["Sunday"]. Dateless
+#           "booking open" alerts (no specific date) always pass through.
 MOVIES = [
     {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
      "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
@@ -54,7 +56,8 @@ MOVIES = [
      "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
-    {"title": "I'm Game", "lang": None,    "to": ["rees", "self"]},
+    # JB+SG, Sunday showings only.
+    {"title": "I'm Game", "lang": None, "to": ["rees", "self"], "days": ["Sunday"]},
     # Nani, Telugu; SG release Sep 24 2026 (per public listings — verify closer
     # to date, as regional release dates shift).
     {"title": "The Paradise", "lang": None, "to": ["rees", "self"]},
@@ -67,7 +70,7 @@ MOVIES = [
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
-STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic", "I'm Game"}   # booked — 2026
+STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic"}   # booked — 2026
 
 # How many days ahead to scan for showtimes (advance sales open ~2-3 wks out).
 LOOKAHEAD_DAYS = 25
@@ -627,6 +630,30 @@ def apply_opening_window(all_slots, opening):
     return kept
 
 
+WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+            "friday": 4, "saturday": 5, "sunday": 6}
+
+
+def apply_day_filter(all_slots):
+    """Per-movie `days` restricts showings to named weekdays (e.g. ["Sunday"]
+    for a Sunday-only watch). Dateless slots (booking-open alerts, myCinemas)
+    always pass — losing the "it's open" signal would be worse than an
+    unfiltered one-off alert."""
+    kept = []
+    for s in all_slots:
+        days = movie_conf(s["movie"]).get("days")
+        if not days or not s["date"]:
+            kept.append(s)
+            continue
+        allowed = {WEEKDAYS[d.lower()] for d in days if d.lower() in WEEKDAYS}
+        try:
+            if date.fromisoformat(s["date"]).weekday() in allowed:
+                kept.append(s)
+        except Exception:  # noqa: BLE001 — unparseable date: keep, don't lose it
+            kept.append(s)
+    return kept
+
+
 def main():
     if "--test" in sys.argv:
         send_email("jn-monitor test alert",
@@ -647,7 +674,8 @@ def main():
             print(f"[{name}] FAILED: {exc}", file=sys.stderr)
 
     seen, opening = load_state()
-    all_slots = apply_opening_window(all_slots, opening)
+    all_slots = apply_opening_window(all_slots, opening)   # learn true opening date first
+    all_slots = apply_day_filter(all_slots)                # then restrict to wanted weekdays
     new_slots = [s for s in all_slots if slot_key(s) not in seen]
 
     if not new_slots:
