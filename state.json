@@ -810,10 +810,15 @@
 "Toxic|TGV|Tebrau City|2026-08-26|23:15",
 "Toxic|TGV|Toppen|2026-08-26|13:30",
 "Toxic|TGV|Toppen|2026-08-26|17:30",
-"Toxic|TGV|Toppen|2026-08-26|21:30"
+"Toxic|TGV|Toppen|2026-08-26|21:30",
+"Vibe|TGV|Toppen|2026-09-18|17:00",
+"Vibe|TGV|Toppen|2026-09-19|17:00",
+"Vibe|TGV|Toppen|2026-09-20|17:00",
+"Vibe|TGV|Toppen|2026-09-21|17:15"
 ],
 "opening": {
 "Toxic": "2026-08-26",
-"I'm Game": "2026-09-04"
+"I'm Game": "2026-09-04",
+"Vibe": "2026-09-18"
 }
 }
