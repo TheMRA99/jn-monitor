@@ -799,6 +799,10 @@
 "Spider-Man: Brand New Day|Golden Village|GVmax, VivoCity|2026-07-30|8:40PM",
 "Spider-Man: Brand New Day|Golden Village|||",
 "Spider-Man: Brand New Day|Shaw Theatres|||",
+"The Paradise|TGV|Tebrau City|2026-09-24|18:45",
+"The Paradise|TGV|Tebrau City|2026-09-25|21:00",
+"The Paradise|TGV|Tebrau City|2026-09-26|21:00",
+"The Paradise|TGV|Tebrau City|2026-09-27|21:00",
 "Toxic|TGV|Kulaijaya|2026-08-26|21:30",
 "Toxic|TGV|Kulaijaya|2026-08-26|22:40",
 "Toxic|TGV|Tasek Central|2026-08-27|19:40",
@@ -819,6 +823,7 @@
 "opening": {
 "Toxic": "2026-08-26",
 "I'm Game": "2026-09-04",
-"Vibe": "2026-09-18"
+"Vibe": "2026-09-18",
+"The Paradise": "2026-09-24"
 }
 }
