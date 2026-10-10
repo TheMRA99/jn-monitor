@@ -5,6 +5,22 @@
 "I'm Game|Golden Village|||",
 "I'm Game|TGV|Kulaijaya|2026-09-06|16:10",
 "I'm Game|TGV|Kulaijaya|2026-09-06|20:40",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-15|1:00PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-15|5:00PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-15|9:00AM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-15|9:00PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-16|10:30AM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-16|10:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-16|2:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-16|6:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-17|10:30AM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-17|10:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-17|2:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-17|6:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-18|10:30AM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-18|10:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-18|2:30PM",
+"Jailer 2|GSC|Johor Bahru - Aurum, The Mall, Mid Valley Southkey|2026-10-18|6:30PM",
 "Jana Nayagan|GSC|GSC AEON Dato Onn|2026-07-23|10:15AM",
 "Jana Nayagan|GSC|GSC AEON Dato Onn|2026-07-23|12:35AM",
 "Jana Nayagan|GSC|GSC AEON Dato Onn|2026-07-23|1:50PM",
@@ -847,6 +863,7 @@
 "Toxic": "2026-08-26",
 "I'm Game": "2026-09-04",
 "Vibe": "2026-09-18",
-"The Paradise": "2026-09-24"
+"The Paradise": "2026-09-24",
+"Jailer 2": "2026-10-15"
 }
 }
