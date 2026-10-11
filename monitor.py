@@ -57,7 +57,9 @@ MOVIES = [
      "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
      "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
-    {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"]},
+    # SG only — Johor (TGV/GSC) dropped.
+    {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"],
+     "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},
     # JB+SG, this Sunday (6 Sep 2026) only — not a recurring weekly watch.
     {"title": "I'm Game", "lang": ["Tamil", "Malayalam"],
      "to": ["rees", "self"], "dates": ["2026-09-06"]},
