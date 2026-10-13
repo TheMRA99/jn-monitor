@@ -72,6 +72,8 @@ MOVIES = [
     {"title": "King",     "lang": "Hindi"},
     # Kunal Kemmu/Preity G Zinta/Sparsh Shrivastava, Hindi; releases Sep 18 2026.
     {"title": "Vibe", "lang": "Hindi"},
+    # Suriya/Naslen/Nazriya Nazim, Tamil; Diwali release 6 Nov 2026. SG + JB, you only.
+    {"title": "Scene", "lang": "Tamil"},
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
