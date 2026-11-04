@@ -75,10 +75,22 @@ jobs:
             git push
           fi
 
+      # Runs even if an earlier step failed (always()), and every dispatch attempt
+      # has a hard timeout + retries. On 2026-11-04 a hung `gh` call here ran into
+      # the 10-min job timeout, no next link was dispatched, and the chain died
+      # for ~2h because the cron safety net did not fire either.
       - name: Chain next run (~3 min)
-        if: ${{ github.event.inputs.test_email != 'true' }}
+        if: ${{ always() && github.event.inputs.test_email != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sleep 180
-          gh workflow run monitor.yml --repo ${{ github.repository }}
+          sleep 150
+          for i in 1 2 3 4 5; do
+            if timeout 40 gh workflow run monitor.yml --repo ${{ github.repository }}; then
+              exit 0
+            fi
+            echo "dispatch attempt $i failed; retrying"
+            sleep 10
+          done
+          echo "all dispatch attempts failed" >&2
+          exit 1

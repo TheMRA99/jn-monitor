@@ -67,7 +67,7 @@ MOVIES = [
     # to date, as regional release dates shift).
     {"title": "The Paradise", "lang": None, "to": ["rees", "self"]},
     # Prabhas, pan-Indian (Telugu/Tamil/Kannada/Malayalam/Hindi); Dec 3 2026.
-    {"title": "Fauzi",        "lang": None, "to": ["rees", "self"]},
+    {"title": "Fauzi",        "lang": None, "to": ["self"]},   # you only
     {"title": "Ramayana", "lang": "Hindi"},
     {"title": "King",     "lang": "Hindi"},
     # Kunal Kemmu/Preity G Zinta/Sparsh Shrivastava, Hindi; releases Sep 18 2026.
@@ -77,7 +77,7 @@ MOVIES = [
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
-STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic", "I'm Game", "The Paradise", "Jailer 2", "Scene"}   # booked — 2026
+STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic", "I'm Game", "The Paradise", "Jailer 2", "Scene", "Ramayana", "Vibe"}   # booked/dropped — 2026
 
 # How many days ahead to scan for showtimes (advance sales open ~2-3 wks out).
 LOOKAHEAD_DAYS = 25
