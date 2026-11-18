@@ -53,7 +53,10 @@ STATE_FILE = "state.json"
 #           "(INFINITY VISION)" listings. Put such an entry BEFORE a plain
 #           entry of the same title: first match wins, the rest fall through.
 # seat_tip: True -> include the reference-seat tip and exact hall names.
-# priority: True -> listed first, subject line flagged PRIORITY.
+# priority: True -> listed first, subject line flagged PRIORITY, and the alert
+#           leads with the EARLIEST bookable session across all sites.
+# window_days: override the opening-window length (default WINDOW_DAYS);
+#           None = no window, alert on every available date.
 MOVIES = [
     {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
      "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
@@ -67,11 +70,12 @@ MOVIES = [
      "require": r"infinity\s*vision|\(\s*(?:atmos\s+)?iv\s*\)",
      "lang": "English", "to": ["self"],
      "sites": ["Shaw Theatres", "Golden Village", "GSC"],
-     "subs": "eng", "seat_tip": True, "priority": True},
+     "subs": "eng", "seat_tip": True, "priority": True,
+     "window_days": None},   # opening sold out: earliest *available* show matters
     # Non-Infinity-Vision Doomsday listings fall through to here: SG, IMAX/GVmax.
     {"title": "Avengers: Doomsday", "lang": "English",
      "to": ["self"], "sites": ["Shaw Theatres", "Golden Village"],
-     "subs": "eng", "premium": True},
+     "subs": "eng", "premium": True, "window_days": None},
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     # SG only — Johor (TGV/GSC) dropped.
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"],
@@ -362,8 +366,16 @@ def collect_shaw():
             # others get the grouped theatre name.
             cinema = venue if (want_prem or conf.get("seat_tip")) else theatres.get(
                 str(st.get("locationId")), venue or "Shaw")
-            slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
-                              st.get("displayDate", ""),
+            # Shaw dates midnight shows by calendar day (12:01 AM on the 17th);
+            # GV and GSC file them under the business day (the 16th, late
+            # night). Normalise to business day so all sites sort together.
+            day = st.get("displayDate", "")
+            if st.get("isMidnight") and day:
+                try:
+                    day = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+                except ValueError:
+                    pass
+            slots.append(slot(movie, "Shaw Theatres", "SG", cinema, day,
                               st.get("displayTime", ""), link))
             emitted += 1
         if emitted == 0 and (found_unsold or not found_any):
@@ -659,9 +671,44 @@ SEAT_TIP = (
 )
 
 
-def compose(new_slots):
+_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*([AaPp][Mm])?")
+LATE_NIGHT_END = 5 * 60   # shows before 5 AM belong to the previous business day
+
+
+def _minutes(t):
+    """Minutes into the business day; 12:05 AM-4:59 AM sort after 11 PM."""
+    m = _TIME_RE.search(t or "")
+    if not m:
+        return None
+    h, mi, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or "").upper()
+    if ap:
+        h = h % 12 + (12 if ap == "PM" else 0)
+    mins = h * 60 + mi
+    return mins + 24 * 60 if mins < LATE_NIGHT_END else mins
+
+
+def earliest_slot(slots):
+    timed = [s for s in slots if s["date"] and _minutes(s["time"]) is not None]
+    return min(timed, key=lambda s: (s["date"], _minutes(s["time"]))) if timed else None
+
+
+def _when_text(s):
+    d = date.fromisoformat(s["date"])
+    txt = f"{d.strftime('%a %d %b')} {s['time'].strip()}"
+    if _minutes(s["time"]) >= 24 * 60:
+        txt += f" (late night, i.e. early hours of {(d + timedelta(days=1)).strftime('%a %d %b')})"
+    return txt
+
+
+def _site_tag(s):
+    return s["site"] if s["region"] in ("SG", "") else f"{s['site']} (Johor)"
+
+
+def compose(new_slots, all_slots=None):
     """Group new slots into a readable email body. Small deltas are itemised
-    (exact new cinema/date/time); large initial dumps are summarised."""
+    (exact new cinema/date/time); large initial dumps are summarised.
+    Priority movies lead with the earliest bookable session across ALL sites
+    (from all currently-open slots, not just the new ones)."""
     by_movie = {}
     for s in new_slots:
         by_movie.setdefault(s["movie"], {}).setdefault(
@@ -673,6 +720,19 @@ def compose(new_slots):
         conf = movie_conf(movie)
         flag = "\U0001F6A8 PRIORITY: " if conf.get("priority") else ""
         lines.append(f"\U0001F3AC {flag}{movie}")
+        if conf.get("priority"):
+            pool = [s for s in (all_slots or new_slots) if s["movie"] == movie]
+            first = earliest_slot(pool)
+            if first:
+                lines.append(f"   ⏰ EARLIEST AVAILABLE: {_when_text(first)}"
+                             f" at {first['cinema']}, {_site_tag(first)}")
+                lines.append(f"      Book: {first['link']}")
+                if first["region"] != "SG":   # SG is preferred: show its best too
+                    sg = earliest_slot([s for s in pool if s["region"] == "SG"])
+                    lines.append(
+                        f"   ⏰ Earliest in SG: {_when_text(sg)} at {sg['cinema']},"
+                        f" {sg['site']} - Book: {sg['link']}" if sg else
+                        "   ⏰ Earliest in SG: none open yet (sold out / not released)")
         if conf.get("premium") or conf.get("seat_tip"):
             lines.append(SEAT_TIP)
         for (site, region, link), items in by_movie[movie].items():
@@ -735,12 +795,13 @@ def apply_opening_window(all_slots, opening):
             opening[s["movie"]] = d
     kept = []
     for s in all_slots:
-        if not s["date"]:
+        window = movie_conf(s["movie"]).get("window_days", WINDOW_DAYS)
+        if not s["date"] or window is None:     # dateless, or window disabled
             kept.append(s)
             continue
         od = opening.get(s["movie"])
         try:
-            last = date.fromisoformat(od) + timedelta(days=WINDOW_DAYS - 1)
+            last = date.fromisoformat(od) + timedelta(days=window - 1)
             if date.fromisoformat(s["date"]) <= last:
                 kept.append(s)
         except Exception:  # noqa: BLE001 — unparseable date: keep, don't lose it
@@ -823,7 +884,7 @@ def main():
         urgent = any(movie_conf(m).get("priority") for m in movies_hit)
         subject = (("\U0001F6A8 PRIORITY - BOOK NOW: " if urgent else
                     "Ticket availability update: ") + ", ".join(movies_hit))
-        send_email(subject, compose(slots_for), to_addr=to_addr)
+        send_email(subject, compose(slots_for, all_slots), to_addr=to_addr)
         print(f"Emailed {len(slots_for)} slot(s) for {', '.join(movies_hit)} "
               f"-> {to_addr}")
 
