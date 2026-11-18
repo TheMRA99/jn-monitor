@@ -28,7 +28,7 @@ import ssl
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
 STATE_FILE = "state.json"
@@ -47,15 +47,31 @@ STATE_FILE = "state.json"
 # dates   : restrict to these EXACT ISO dates, e.g. ["2026-09-06"] = only that
 #           one date (not every Sunday). Dateless "booking open" alerts
 #           (no specific date) always pass through either restriction.
+# label   : identity used in alerts/state/STOPPED when two entries share a
+#           title (defaults to title).
+# require : regex the raw site title must match, e.g. to pick out the
+#           "(INFINITY VISION)" listings. Put such an entry BEFORE a plain
+#           entry of the same title: first match wins, the rest fall through.
+# seat_tip: True -> include the reference-seat tip and exact hall names.
+# priority: True -> listed first, subject line flagged PRIORITY.
 MOVIES = [
     {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
      "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
     {"title": "Spider-Man: Brand New Day", "lang": "English",
      "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
      "subs": "eng", "premium": True},
+    # PRIORITY. Disney "Infinity Vision" certified premium-large-format halls.
+    # SG (Shaw, GV) preferred, Johor (GSC) too. Sites title these "(2D |
+    # INFINITY VISION)", "(IV)", "(Infinity Vision)".
+    {"title": "Avengers: Doomsday", "label": "Avengers: Doomsday (Infinity Vision)",
+     "require": r"infinity\s*vision|\(\s*(?:atmos\s+)?iv\s*\)",
+     "lang": "English", "to": ["rees", "self"],
+     "sites": ["Shaw Theatres", "Golden Village", "GSC"],
+     "subs": "eng", "seat_tip": True, "priority": True},
+    # Non-Infinity-Vision Doomsday listings fall through to here: SG, IMAX/GVmax.
     {"title": "Avengers: Doomsday", "lang": "English",
      "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
-     "subs": "eng", "premium": True},   # premium halls (need not be IMAX)
+     "subs": "eng", "premium": True},
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     # SG only — Johor (TGV/GSC) dropped.
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"],
@@ -161,31 +177,44 @@ def lang_ok(desired, *texts) -> bool:
     return bool(mentioned & wanted)
 
 
+def ident(m: dict) -> str:
+    """A movie entry's identity in alerts, state and STOPPED."""
+    return m.get("label") or m["title"]
+
+
 def watched() -> list[dict]:
-    return [m for m in MOVIES if m["title"] not in STOPPED]
+    return [m for m in MOVIES if ident(m) not in STOPPED]
 
 
 def match_movie(site: str, site_title: str, *lang_texts) -> str | None:
-    """Match against watched movies, honouring per-movie `sites` scoping and
-    language. `site` is the calling collector's site name."""
+    """Match against watched movies, honouring per-movie `sites`, `require`
+    and language. Returns the first matching entry's identity."""
     for m in watched():
         if not title_matches(m["title"], site_title):
+            continue
+        if m.get("require") and not re.search(m["require"], site_title, re.I):
             continue
         if not lang_ok(m.get("lang"), site_title, *lang_texts):
             continue
         allowed = m.get("sites")
         if allowed and site not in allowed:
             continue
-        return m["title"]
+        return ident(m)
     return None
 
 
 def movie_lang(title: str) -> str | list[str] | None:
-    return next((m.get("lang") for m in MOVIES if m["title"] == title), None)
+    return next((m.get("lang") for m in MOVIES if ident(m) == title), None)
 
 
 def movie_conf(title: str) -> dict:
-    return next((m for m in MOVIES if m["title"] == title), {})
+    return next((m for m in MOVIES if ident(m) == title), {})
+
+
+def wants_detail(title: str) -> bool:
+    """Movies whose alerts should list individual sessions, not just 'open'."""
+    c = movie_conf(title)
+    return any(c.get(k) for k in ("premium", "subs", "seat_tip", "require"))
 
 
 def recipients_for(title: str) -> list[str]:
@@ -193,7 +222,7 @@ def recipients_for(title: str) -> list[str]:
     self_addr = os.environ["SMTP_USER"]
     keymap = {"rees": os.environ.get("ALERT_TO") or self_addr, "self": self_addr}
     for m in MOVIES:
-        if m["title"] == title:
+        if ident(m) == title:
             keys = m.get("to", ["self"])
             if isinstance(keys, str):
                 keys = [keys]
@@ -274,12 +303,40 @@ def _shaw_premium(fmt, venue):
                                          for k in PREMIUM_VENUE_KW)
 
 
+def _shaw_sessions(code, day_cache):
+    """Every showtime for one Shaw movie. get_show_times must be given a
+    `date` — without one it returns an unrelated default set, which is why
+    advance sessions used to be invisible. So walk the movie's own date
+    selectors and pick its group out of each day's (cached) listing."""
+    try:
+        days = [d["code"] for d in json.loads(http(
+            f"{SHAW_BASE}/get_date_selectors?movieId={code}", extra=SHAW_HDRS))
+            if d.get("code")]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Shaw/dates {code}] {exc}", file=sys.stderr)
+        return []
+    out = []
+    for d in days:
+        if d not in day_cache:
+            try:
+                day_cache[d] = json.loads(http(
+                    f"{SHAW_BASE}/get_show_times?date={d}", extra=SHAW_HDRS))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Shaw/showtimes {d}] {exc}", file=sys.stderr)
+                day_cache[d] = []
+        for g in day_cache[d]:
+            if str(g.get("movieId")) == str(code):
+                out.extend(g.get("showTimes", []))
+    return out
+
+
 def collect_shaw():
     slots = []
     selectors = json.loads(http(f"{SHAW_BASE}/get_selectors", extra=SHAW_HDRS))
     theatres = {str(x["code"]): x["name"].replace("Shaw Theatres", "").strip()
                 for x in selectors if x.get("type") == 2}
     movies = [x for x in selectors if x.get("type") == 1]
+    day_cache = {}
     for mv in movies:
         movie = match_movie("Shaw Theatres", mv["name"])
         if not movie:
@@ -289,34 +346,30 @@ def collect_shaw():
         want_prem = conf.get("premium")
         code = mv["code"]
         link = f"https://shaw.sg/movie-details/{code}"
-        emitted = 0
-        try:
-            groups = json.loads(
-                http(f"{SHAW_BASE}/get_show_times?movieCode={code}", extra=SHAW_HDRS))
-            for g in groups:
-                if str(g.get("movieId")) != str(code):
-                    continue
-                for st in g.get("showTimes", []):
-                    venue = st.get("locationVenueName", "")
-                    fmt = st.get("formatCode", "")
-                    if want_eng and st.get("subtitleCode") not in ENG_SUB_CODES:
-                        continue
-                    if want_prem and not _shaw_premium(fmt, venue):
-                        continue
-                    # premium movies get the exact hall (shows IMAX/Lumiere);
-                    # others get the (grouped) theatre name.
-                    cinema = venue if want_prem else theatres.get(
-                        str(st.get("locationId")), venue or "Shaw")
-                    slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
-                                      st.get("displayDate", ""),
-                                      st.get("displayTime", ""), link))
-                    emitted += 1
-        except Exception as exc:  # noqa: BLE001
-            print(f"[Shaw/showtimes {code}] {exc}", file=sys.stderr)
-        if emitted == 0:
-            # Bookable but no matching showtimes yet (endpoint flaky, or only
-            # non-premium/non-Eng showings so far) — never miss the OPENING:
-            # always fire a booking-open alert.
+        emitted, found_any, found_unsold = 0, False, False
+        for st in _shaw_sessions(code, day_cache):
+            found_any = True
+            if st.get("seatingStatus") == "SO":
+                continue        # sold out: not buyable, don't alert on it
+            found_unsold = True
+            venue = st.get("locationVenueName", "")
+            fmt = st.get("formatCode", "")
+            if want_eng and st.get("subtitleCode") not in ENG_SUB_CODES:
+                continue
+            if want_prem and not _shaw_premium(fmt, venue):
+                continue
+            # premium / seat-tip movies get the exact hall (e.g. Lido Hall 1);
+            # others get the grouped theatre name.
+            cinema = venue if (want_prem or conf.get("seat_tip")) else theatres.get(
+                str(st.get("locationId")), venue or "Shaw")
+            slots.append(slot(movie, "Shaw Theatres", "SG", cinema,
+                              st.get("displayDate", ""),
+                              st.get("displayTime", ""), link))
+            emitted += 1
+        if emitted == 0 and (found_unsold or not found_any):
+            # Bookable but nothing matching parsed yet — never miss the
+            # OPENING, fire a booking-open alert. (Skipped when every session
+            # found is sold out: "open" would be misleading.)
             slots.append(slot(movie, "Shaw Theatres", "SG", "", "", "", link))
     return slots
 
@@ -332,6 +385,19 @@ def _gv(path):
                         extra={"Content-Type": "application/json",
                                "Origin": "https://www.gv.com.sg"})
     return json.loads(body)
+
+
+GV_SGT = timezone(timedelta(hours=8))
+
+
+def _gv_buytickets(day, advance=False):
+    ms = int(datetime(day.year, day.month, day.day, tzinfo=GV_SGT).timestamp() * 1000)
+    body = json.dumps({"cinemaId": "", "filmCode": "", "date": ms,
+                       "advanceSales": advance})
+    raw = http_browser("https://www.gv.com.sg/.gv-api/v2buytickets", data=body,
+                       extra={"Content-Type": "application/json",
+                              "Origin": "https://www.gv.com.sg"})
+    return json.loads(raw).get("data") or {}
 
 
 def _gv_date(s):  # "18-07-2026" -> "2026-07-18"
@@ -355,39 +421,58 @@ def collect_gv():
     if not bookable:
         return slots
 
-    # 2. Same-day session detail (GV only exposes today's feed). Used to give
-    #    premium/subtitle-filtered showtimes for movies that ask for them.
-    detailed = set()
-    want_detail = {m for m in bookable
-                   if movie_conf(m).get("premium") or movie_conf(m).get("subs")}
+    # 2. Session detail for movies that ask for it. v2buytickets takes
+    #    {cinemaId, filmCode, date (ms, SGT midnight), advanceSales} — the site's
+    #    7 day tabs plus its "Advance Sales" tab (everything beyond a week).
+    detailed, found_any, found_unsold, seen_sess = set(), set(), set(), set()
+    want_detail = {m for m in bookable if wants_detail(m)}
     if want_detail:
         try:
             names = {c["id"]: c["name"] for c in (_gv("cinemas").get("data") or [])}
-            bt = _gv("v2buytickets").get("data", {})
+        except Exception as exc:  # noqa: BLE001
+            print(f"[GV/cinemas] {exc}", file=sys.stderr)
+            names = {}
+        today = datetime.now(GV_SGT).date()
+        queries = [(today + timedelta(days=i), False) for i in range(7)]
+        queries.append((today + timedelta(days=7), True))
+        for day, advance in queries:
+            try:
+                bt = _gv_buytickets(day, advance)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[GV/sessions {day} adv={advance}] {exc}", file=sys.stderr)
+                continue
             for c in bt.get("cinemas") or []:
-                cname = names.get(c["id"], "")
+                cname = names.get(c["id"], c["id"])
                 is_prem = any(k in cname.lower() for k in GV_PREMIUM_KW)
                 for m in c.get("movies") or []:
                     movie = match_movie("Golden Village", m.get("filmTitle", ""))
                     if movie not in want_detail:
                         continue
                     conf = movie_conf(movie)
-                    if conf.get("premium") and not is_prem:
-                        continue
-                    if conf.get("subs") == "eng" and \
-                            "English" not in (m.get("subTitles") or []):
-                        continue
                     for t in m.get("times") or []:
+                        found_any.add(movie)
+                        if (t.get("soldPercent") or 0) >= 1:
+                            continue    # sold out: not buyable
+                        found_unsold.add(movie)
+                        if conf.get("premium") and not is_prem:
+                            continue
+                        if conf.get("subs") == "eng" and \
+                                "English" not in (m.get("subTitles") or []):
+                            continue
+                        when = _gv_date(t.get("showDate", ""))
+                        key = (movie, cname, when, t.get("time12", ""))
+                        if key in seen_sess:
+                            continue
+                        seen_sess.add(key)
                         slots.append(slot(movie, "Golden Village", "SG", cname,
-                                          _gv_date(t.get("showDate", "")),
-                                          t.get("time12", ""), GV_LINK))
+                                          when, t.get("time12", ""), GV_LINK))
                         detailed.add(movie)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[GV/sessions] {exc}", file=sys.stderr)
 
-    # 3. Bookable-level alert for movies without same-day session detail yet
-    #    (advance sales are future-dated and not in GV's same-day feed).
+    # 3. Booking-open alert for bookable movies with no session detail yet —
+    #    except when every session found is sold out ("open" would mislead).
     for movie in bookable - detailed:
+        if movie in found_any and movie not in found_unsold:
+            continue
         slots.append(slot(movie, "Golden Village", "SG", "", "", "", GV_LINK))
     return slots
 
@@ -490,10 +575,18 @@ def collect_gsc():
         if not movie:
             continue
         desired = movie_lang(movie)
+        conf = movie_conf(movie)
+        hall_detail = conf.get("premium") or conf.get("seat_tip")
+        seen_sess = set()
         code = parent.get("code")
         link = (f"https://epaymentwebapp.gsc.com.my/showtime-by-movies/"
                 f"{code}/{_slugify(title)}?id={code}")
-        for d in upcoming_dates():
+        # The movie list carries each film's real show dates (<show opsdate>).
+        # Scan exactly those: a fixed "next N days" window can stop short of
+        # an advance-sale opening (Doomsday opens 16 Dec, 4 weeks out).
+        days = sorted({s.get("opsdate") for s in parent.iter("show")
+                       if s.get("opsdate")}) or upcoming_dates()
+        for d in days:
             try:
                 locs = ET.fromstring(http(GSC_TIMES.format(code=code, d=d)))
             except Exception as exc:  # noqa: BLE001
@@ -506,10 +599,20 @@ def collect_gsc():
                 for child in loc.findall("child"):
                     if not lang_ok(desired, child.get("lang", "")):
                         continue  # skip wrong-language version
-                    times = [(s.get("timestr") or s.get("time") or "").strip()
-                             for s in child.findall("show")]
-                    for t in dict.fromkeys(t for t in times if t):
-                        slots.append(slot(movie, "GSC", "Johor", cinema, d, t, link))
+                    for s in child.findall("show"):
+                        if s.get("hallfull") == "1":
+                            continue                    # full hall: skip
+                        t = (s.get("timestr") or s.get("time") or "").strip()
+                        if not t:
+                            continue
+                        where = cinema
+                        hall = (s.get("hname") or "").strip()
+                        if hall_detail and hall:        # "4" and "Hall 4" are one hall
+                            where = f"{cinema} - {'Hall ' + hall if hall.isdigit() else hall}"
+                        key = (where, d, t)
+                        if key not in seen_sess:
+                            seen_sess.add(key)
+                            slots.append(slot(movie, "GSC", "Johor", where, d, t, link))
     # No national fallback: MY sites alert only on real Johor showtimes.
     return slots
 
@@ -549,7 +652,8 @@ DETAIL_LIMIT = 25
 SEAT_TIP = (
     "   \U0001F3A7 Best seats: dead-centre columns, ~2/3 of the way back — the "
     "audio/visual reference spot (a row or two behind the exact middle). "
-    "IMAX: sit a touch further back so the screen fills your view. "
+    "IMAX / Infinity Vision big screens: sit a touch further back so the "
+    "screen fills your view. "
     "Dolby Atmos: centre-back for the truest surround + overhead mix. "
     "Avoid the front third and the very back/under-balcony."
 )
@@ -564,9 +668,12 @@ def compose(new_slots):
             (s["site"], s["region"], s["link"]), []).append(s)
 
     lines = ["New ticket availability:\n"]
-    for movie in sorted(by_movie):
-        lines.append(f"\U0001F3AC {movie}")
-        if movie_conf(movie).get("premium"):
+    order = sorted(by_movie, key=lambda m: (not movie_conf(m).get("priority"), m))
+    for movie in order:
+        conf = movie_conf(movie)
+        flag = "\U0001F6A8 PRIORITY: " if conf.get("priority") else ""
+        lines.append(f"\U0001F3AC {flag}{movie}")
+        if conf.get("premium") or conf.get("seat_tip"):
             lines.append(SEAT_TIP)
         for (site, region, link), items in by_movie[movie].items():
             tag = site if region in ("SG", "") else f"{site} (Johor)"
@@ -711,8 +818,11 @@ def main():
             by_recipient.setdefault(addr, []).append(s)
 
     for to_addr, slots_for in by_recipient.items():
-        movies_hit = sorted({s["movie"] for s in slots_for})
-        subject = "Ticket availability update: " + ", ".join(movies_hit)
+        movies_hit = sorted({s["movie"] for s in slots_for},
+                            key=lambda m: (not movie_conf(m).get("priority"), m))
+        urgent = any(movie_conf(m).get("priority") for m in movies_hit)
+        subject = (("\U0001F6A8 PRIORITY - BOOK NOW: " if urgent else
+                    "Ticket availability update: ") + ", ".join(movies_hit))
         send_email(subject, compose(slots_for), to_addr=to_addr)
         print(f"Emailed {len(slots_for)} slot(s) for {', '.join(movies_hit)} "
               f"-> {to_addr}")

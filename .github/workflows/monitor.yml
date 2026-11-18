@@ -84,7 +84,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sleep 150
+          sleep 90
           for i in 1 2 3 4 5; do
             if timeout 40 gh workflow run monitor.yml --repo ${{ github.repository }}; then
               exit 0
