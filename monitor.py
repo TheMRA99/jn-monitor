@@ -65,12 +65,12 @@ MOVIES = [
     # INFINITY VISION)", "(IV)", "(Infinity Vision)".
     {"title": "Avengers: Doomsday", "label": "Avengers: Doomsday (Infinity Vision)",
      "require": r"infinity\s*vision|\(\s*(?:atmos\s+)?iv\s*\)",
-     "lang": "English", "to": ["rees", "self"],
+     "lang": "English", "to": ["self"],
      "sites": ["Shaw Theatres", "Golden Village", "GSC"],
      "subs": "eng", "seat_tip": True, "priority": True},
     # Non-Infinity-Vision Doomsday listings fall through to here: SG, IMAX/GVmax.
     {"title": "Avengers: Doomsday", "lang": "English",
-     "to": ["rees", "self"], "sites": ["Shaw Theatres", "Golden Village"],
+     "to": ["self"], "sites": ["Shaw Theatres", "Golden Village"],
      "subs": "eng", "premium": True},
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     # SG only — Johor (TGV/GSC) dropped.
