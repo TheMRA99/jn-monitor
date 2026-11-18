@@ -57,6 +57,8 @@ STATE_FILE = "state.json"
 #           leads with the EARLIEST bookable session across all sites.
 # window_days: override the opening-window length (default WINDOW_DAYS);
 #           None = no window, alert on every available date.
+# until   : ISO date. Ignore showings dated after it, and stop watching the
+#           movie entirely once that date has passed (Singapore time).
 MOVIES = [
     {"title": "Jana Nayagan", "lang": "Tamil", "to": ["rees", "self"],
      "sites": ["Shaw Theatres", "Golden Village", "myCinemas"]},   # SG only
@@ -71,11 +73,13 @@ MOVIES = [
      "lang": "English", "to": ["self"],
      "sites": ["Shaw Theatres", "Golden Village", "GSC"],
      "subs": "eng", "seat_tip": True, "priority": True,
-     "window_days": None},   # opening sold out: earliest *available* show matters
+     "window_days": None,     # opening sold out: earliest *available* show matters
+     "until": "2026-12-20"},  # nothing after 20 Dec; auto-stops after that
     # Non-Infinity-Vision Doomsday listings fall through to here: SG, IMAX/GVmax.
     {"title": "Avengers: Doomsday", "lang": "English",
      "to": ["self"], "sites": ["Shaw Theatres", "Golden Village"],
-     "subs": "eng", "premium": True, "window_days": None},
+     "subs": "eng", "premium": True, "window_days": None,
+     "until": "2026-12-20"},
     {"title": "Toxic",    "lang": "Tamil", "to": ["rees", "self"]},
     # SG only — Johor (TGV/GSC) dropped.
     {"title": "Jailer 2", "lang": "Tamil", "to": ["rees", "self"],
@@ -186,8 +190,14 @@ def ident(m: dict) -> str:
     return m.get("label") or m["title"]
 
 
+def _today_sgt() -> str:
+    return datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+
+
 def watched() -> list[dict]:
-    return [m for m in MOVIES if ident(m) not in STOPPED]
+    today = _today_sgt()
+    return [m for m in MOVIES if ident(m) not in STOPPED
+            and not (m.get("until") and today > m["until"])]
 
 
 def match_movie(site: str, site_title: str, *lang_texts) -> str | None:
@@ -824,6 +834,8 @@ def apply_day_filter(all_slots):
     for s in all_slots:
         conf = movie_conf(s["movie"])
         days, dates = conf.get("days"), conf.get("dates")
+        if s["date"] and conf.get("until") and s["date"] > conf["until"]:
+            continue                 # past the movie's cut-off date (business day)
         if not s["date"] or (not days and not dates):
             kept.append(s)
             continue
