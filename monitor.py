@@ -69,7 +69,8 @@ MOVIES = [
     # SG (Shaw, GV) preferred, Johor (GSC) too. Sites title these "(2D |
     # INFINITY VISION)", "(IV)", "(Infinity Vision)".
     {"title": "Avengers: Doomsday", "label": "Avengers: Doomsday (Infinity Vision)",
-     "require": r"infinity\s*vision|\(\s*(?:atmos\s+)?iv\s*\)",
+     # any bracket containing the word IV: "(IV)", "(IV Atmos)", "(Atmos IV)"
+     "require": r"infinity\s*vision|\([^)]*\biv\b[^)]*\)",
      "lang": "English", "to": ["self"],
      "sites": ["Shaw Theatres", "Golden Village", "GSC"],
      "subs": "eng", "seat_tip": True, "priority": True,
