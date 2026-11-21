@@ -102,7 +102,8 @@ MOVIES = [
 ]
 
 # Titles to stop watching (no more emails). Add a title here when done.
-STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic", "I'm Game", "The Paradise", "Jailer 2", "Scene", "Ramayana", "Vibe"}   # booked/dropped — 2026
+STOPPED: set[str] = {"Jana Nayagan", "Spider-Man: Brand New Day", "Toxic", "I'm Game", "The Paradise", "Jailer 2", "Scene", "Ramayana", "Vibe",
+                      "Avengers: Doomsday (Infinity Vision)", "Avengers: Doomsday"}   # booked/dropped — 2026
 
 # How many days ahead to scan for showtimes (advance sales open ~2-3 wks out).
 LOOKAHEAD_DAYS = 25
