@@ -788,13 +788,68 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE) as f:
             d = json.load(f)
-            return set(d.get("seen", [])), dict(d.get("opening", {}))
-    return set(), {}
+            return (set(d.get("seen", [])), dict(d.get("opening", {})),
+                    set(d.get("reminders_sent", [])))
+    return set(), {}, set()
 
 
-def save_state(seen, opening):
+def save_state(seen, opening, reminders_sent):
     with open(STATE_FILE, "w") as f:
-        json.dump({"seen": sorted(seen), "opening": opening}, f, indent=0)
+        json.dump({"seen": sorted(seen), "opening": opening,
+                   "reminders_sent": sorted(reminders_sent)}, f, indent=0)
+
+
+# --- reminders ------------------------------------------------------------
+# Email reminders sent by this same monitor chain (it runs every couple of
+# minutes) rather than a separate cron, since GitHub's scheduler has proven
+# unreliable. Each reminder fires on its due days at/after `at` (Singapore
+# time), once per day: sent days are recorded in state.json.
+SGT = timezone(timedelta(hours=8))
+REMINDERS = [
+    {"id": "doomsday-gvmax-2026-12-17",
+     "start": "2026-12-02", "end": "2026-12-16", "every_days": 2, "at": "15:00",
+     "event": "2026-12-17T07:40",
+     "subject": "Reminder: Avengers: Doomsday - Thu 17 Dec, 7:40 AM, GVmax VivoCity N17",
+     "details": [
+         "\U0001F3AC Avengers: Doomsday (IV Atmos) - Infinity Vision + Dolby Atmos",
+         "\U0001F4C5 Thursday, 17 Dec 2026, 7:40 AM (early-morning show)",
+         "\U0001F4CD GVmax, VivoCity - Hall 1",
+         "\U0001F4BA Seat N17",
+     ]},
+]
+
+
+def due_reminders(sent, now):
+    """(reminder, state-key) pairs due at `now` (an aware SGT datetime)."""
+    today = now.date()
+    for r in REMINDERS:
+        start, end = date.fromisoformat(r["start"]), date.fromisoformat(r["end"])
+        if not start <= today <= end:
+            continue
+        if (today - start).days % r.get("every_days", 1):
+            continue
+        hh, mm = (int(x) for x in r.get("at", "00:00").split(":"))
+        if (now.hour, now.minute) < (hh, mm):
+            continue
+        key = f"{r['id']}|{today.isoformat()}"
+        if key not in sent:
+            yield r, key
+
+
+def reminder_body(r, now):
+    days = (datetime.fromisoformat(r["event"]).date() - now.date()).days
+    countdown = ("Tomorrow morning - see you at 7:40 AM!" if days == 1
+                 else f"{days} days to go")
+    return "\n".join(r["details"] + ["", f"⏳ {countdown}"])
+
+
+def send_reminders(sent, now=None):
+    now = now or datetime.now(SGT)
+    for r, key in list(due_reminders(sent, now)):
+        send_email(r["subject"], reminder_body(r, now),
+                   to_addr=os.environ["SMTP_USER"])
+        sent.add(key)
+        print(f"Reminder sent: {key}")
 
 
 def apply_opening_window(all_slots, opening):
@@ -875,14 +930,19 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"[{name}] FAILED: {exc}", file=sys.stderr)
 
-    seen, opening = load_state()
+    seen, opening, reminders_sent = load_state()
+    try:
+        send_reminders(reminders_sent)
+    except Exception as exc:  # noqa: BLE001 — never let a reminder break monitoring
+        print(f"[reminders] FAILED: {exc}", file=sys.stderr)
+
     all_slots = apply_opening_window(all_slots, opening)   # learn true opening date first
     all_slots = apply_day_filter(all_slots)                # then restrict to wanted weekdays
     new_slots = [s for s in all_slots if slot_key(s) not in seen]
 
     if not new_slots:
         print("No new availability.")
-        save_state(seen, opening)   # persist any newly-learned opening dates
+        save_state(seen, opening, reminders_sent)   # opening dates + reminders sent
         return 0
 
     # Route by recipient. A movie may have several recipients (Jana Nayagan
@@ -903,7 +963,7 @@ def main():
               f"-> {to_addr}")
 
     seen.update(slot_key(s) for s in all_slots)
-    save_state(seen, opening)
+    save_state(seen, opening, reminders_sent)
     print(f"State now has {len(seen)} slots.")
     return 0
 
